@@ -146,7 +146,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     setDragOverlay(false);
     
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+      const files = Array.from(e.dataTransfer.files).filter((f: any) => f.type.startsWith('image/'));
       if (files.length === 0) return;
 
       const newItems: Item[] = await Promise.all(files.map(f => {
@@ -493,7 +493,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     try {
       // 收集并上传新图片至 Firebase
       const uploads: Promise<void>[] = [];
-      Object.values(board).forEach(list => {
+      Object.values(board).forEach((list: any) => {
         list.forEach(item => {
           if (item.url.startsWith('data:image/')) {
             const docRef = doc(db, 'images', item.name); 
@@ -680,12 +680,12 @@ D. 深圳
             
             <Droppable droppableId="unassigned" direction="vertical">
               {(provided, snapshot) => (
-                <div 
-                  ref={provided.innerRef} 
-                  {...provided.droppableProps}
-                  className={`flex-1 overflow-y-auto p-4 custom-scrollbar transition-colors ${snapshot.isDraggingOver ? 'bg-blue-50/50' : ''}`}
-                >
-                  <div className="grid grid-cols-2 gap-3">
+                <div className={`flex-1 overflow-y-auto p-4 custom-scrollbar transition-colors ${snapshot.isDraggingOver ? 'bg-blue-50/50' : ''}`}>
+                  <div 
+                    ref={provided.innerRef} 
+                    {...provided.droppableProps}
+                    className="grid grid-cols-2 gap-3 min-h-full"
+                  >
                     {(board.unassigned || []).map((item, index) => (
                       <Draggable key={item.id} draggableId={item.id} index={index}>
                         {(provided, snapshot) => (
@@ -820,17 +820,18 @@ D. 深圳
                          </div>
                          <Droppable droppableId={`${q.id}-body`} direction="horizontal">
                            {(provided, snapshot) => (
-                             <div
-                               ref={provided.innerRef}
-                               {...provided.droppableProps}
-                               onWheel={handleWheel}
-                               className={`flex gap-3 overflow-x-auto custom-scrollbar pb-2 transition-colors min-h-[100px] border-2 border-dashed rounded-xl p-2 ${snapshot.isDraggingOver ? 'bg-green-50 border-green-300' : 'border-slate-200 bg-white'}`}
-                             >
-                                {board[`${q.id}-body`]?.length === 0 && !snapshot.isDraggingOver && (
-                                  <div className="flex-1 min-w-[120px] flex items-center justify-center text-slate-400 text-xs font-medium">
-                                    拖拽图片到此
-                                  </div>
-                                )}
+                             <div className={`relative overflow-hidden transition-colors min-h-[100px] border-2 border-dashed rounded-xl p-2 ${snapshot.isDraggingOver ? 'bg-green-50 border-green-300' : 'border-slate-200 bg-white'}`}>
+                               {board[`${q.id}-body`]?.length === 0 && !snapshot.isDraggingOver && (
+                                 <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-xs font-medium pointer-events-none">
+                                   拖拽图片到此
+                                 </div>
+                               )}
+                               <div
+                                 ref={provided.innerRef}
+                                 {...provided.droppableProps}
+                                 onWheel={handleWheel}
+                                 className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
+                               >
                                 {board[`${q.id}-body`]?.map((item, index) => (
                                   <Draggable key={item.id} draggableId={item.id} index={index}>
                                     {(provided, snapshot) => (
@@ -853,6 +854,7 @@ D. 深圳
                                   </Draggable>
                                 ))}
                                 {provided.placeholder}
+                              </div>
                              </div>
                            )}
                          </Droppable>
@@ -863,17 +865,18 @@ D. 深圳
                            <div className="text-xs font-bold text-slate-500">选项配图 (分别在此处对应 A B C D)</div>
                            <Droppable droppableId={`${q.id}-options`} direction="horizontal">
                              {(provided, snapshot) => (
-                               <div
-                                 ref={provided.innerRef}
-                                 {...provided.droppableProps}
-                                 onWheel={handleWheel}
-                                 className={`flex gap-3 overflow-x-auto custom-scrollbar pb-2 transition-colors min-h-[100px] border-2 border-dashed rounded-xl p-2 ${snapshot.isDraggingOver ? 'bg-indigo-50 border-indigo-300' : 'border-slate-200 bg-white'}`}
-                               >
+                               <div className={`relative overflow-hidden transition-colors min-h-[100px] border-2 border-dashed rounded-xl p-2 ${snapshot.isDraggingOver ? 'bg-indigo-50 border-indigo-300' : 'border-slate-200 bg-white'}`}>
                                   {board[`${q.id}-options`]?.length === 0 && !snapshot.isDraggingOver && (
-                                    <div className="flex-1 min-w-[120px] flex items-center justify-center text-slate-400 text-xs font-medium">
+                                    <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-xs font-medium pointer-events-none">
                                       拖拽图片到此
                                     </div>
                                   )}
+                                  <div
+                                    ref={provided.innerRef}
+                                    {...provided.droppableProps}
+                                    onWheel={handleWheel}
+                                    className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
+                                  >
                                   {board[`${q.id}-options`]?.map((item, index) => (
                                     <Draggable key={item.id} draggableId={item.id} index={index}>
                                       {(provided, snapshot) => {
@@ -903,6 +906,7 @@ D. 深圳
                                     </Draggable>
                                   ))}
                                   {provided.placeholder}
+                                  </div>
                                </div>
                              )}
                            </Droppable>
