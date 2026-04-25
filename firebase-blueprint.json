@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "Question": {
+      "title": "Question",
+      "description": "A single question in a quiz",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["single", "tf"] },
+        "text": { "type": "string" },
+        "options": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "answer": { "type": "number" },
+        "score": { "type": "number" },
+        "imageFallbackText": { "type": "string" },
+        "images": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "optionImages": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["id", "type", "text", "options", "answer", "score"]
+    },
+    "QuizVersion": {
+      "title": "QuizVersion",
+      "description": "A version/set of quiz questions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "questions": {
+          "type": "array",
+          "items": { "$ref": "#/entities/Question" }
+        }
+      },
+      "required": ["id", "name", "questions"]
+    },
+    "Image": {
+      "title": "Image Asset",
+      "description": "Base64 image data",
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" }
+      },
+      "required": ["content"]
+    }
+  },
+  "firestore": {
+    "quizVersions/{versionId}": {
+      "schema": "#/entities/QuizVersion",
+      "description": "Stores different versions of the quiz"
+    },
+    "images/{imageId}": {
+      "schema": "#/entities/Image",
+      "description": "Stores base64 encoded images"
+    }
+  }
+}

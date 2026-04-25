@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email_verified == true && request.auth.token.email == 'candiescot@gmail.com';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Question Entity Validation Helper (simplified array checks per Firebase limits)
+    function isValidQuestion(q) {
+      return q is map &&
+             q.keys().hasAll(['id', 'type', 'text', 'options', 'answer', 'score']) &&
+             q.id is string && q.id.size() <= 128 &&
+             q.type is string && q.type.size() <= 10 &&
+             q.text is string && q.text.size() <= 2000 &&
+             q.options is list && q.options.size() <= 10 &&
+             q.answer is number &&
+             q.score is number;
+    }
+
+    function isValidQuizVersion(data) {
+      return data.keys().hasAll(['id', 'name', 'questions']) &&
+             data.keys().size() == 3 &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.questions is list && data.questions.size() <= 50;
+    }
+
+    match /quizVersions/{versionId} {
+      // Anyone can read quizzes
+      allow get, list: if true;
+
+      // Only admin can manage quizzes
+      allow create: if isAdmin() && isValidId(versionId) && isValidQuizVersion(incoming());
+      
+      allow update: if isAdmin() && isValidId(versionId) && isValidQuizVersion(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'questions'])
+      );
+
+      allow delete: if isAdmin() && isValidId(versionId);
+    }
+
+    function isValidImage(data) {
+      return data.keys().hasAll(['content']) &&
+             data.keys().size() == 1 &&
+             data.content is string && data.content.size() <= 800000; // ~800KB max for base64
+    }
+
+    match /images/{imageId} {
+      // Anyone can read images
+      allow get, list: if true;
+
+      // Only admin can write images
+      allow create: if isAdmin() && isValidId(imageId) && isValidImage(incoming());
+      
+      allow update: if isAdmin() && isValidId(imageId) && isValidImage(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['content'])
+      );
+
+      allow delete: if isAdmin() && isValidId(imageId);
+    }
+  }
+}

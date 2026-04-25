@@ -1,0 +1,923 @@
+import React, { useState, useEffect, DragEvent } from 'react';
+import { QuizVersion, Question, QuestionType } from '../data';
+import { Image as ImageIcon, Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Settings, Wand2, Loader2 } from 'lucide-react';
+import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
+import { doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { db, auth } from '../firebase';
+import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
+
+interface Item {
+  id: string; // The image url or local base64
+  name: string; // display name
+  url: string; // src
+}
+
+interface Board {
+  [key: string]: Item[];
+}
+
+export const ImageMatcher = ({ password, initialVersions, onClose }: { password?: string, initialVersions: QuizVersion[], onClose: () => void }) => {
+  const [versions, setVersions] = useState<QuizVersion[]>(initialVersions);
+  const [selectedVersionId, setSelectedVersionId] = useState(initialVersions[0]?.id || '');
+  
+  const [localQuestions, setLocalQuestions] = useState<Question[]>([]);
+  const [versionName, setVersionName] = useState('');
+
+  const [board, setBoard] = useState<Board>({ unassigned: [] });
+  const [loading, setLoading] = useState(true);
+  const [dragOverlay, setDragOverlay] = useState(false);
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiText, setAiText] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+
+  useEffect(() => {
+    if (!selectedVersionId) return;
+    const currentVersion = versions.find(v => v.id === selectedVersionId);
+    if (!currentVersion) return;
+
+    setVersionName(currentVersion.name);
+    setLocalQuestions(JSON.parse(JSON.stringify(currentVersion.questions)));
+    
+    const allKnownImages = new Set<string>();
+    const initialBoard: Board = { unassigned: board.unassigned || [] }; 
+    
+    currentVersion.questions.forEach(q => {
+      const imgs = (q.images || []).filter(Boolean);
+      const optImgs = (q.optionImages || []).filter(Boolean);
+      initialBoard[`${q.id}-body`] = imgs.map((img, i) => ({
+        id: `${q.id}-body-img-${i}-${img}`,
+        name: img,
+        url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
+      }));
+      initialBoard[`${q.id}-options`] = optImgs.map((img, i) => ({
+        id: `${q.id}-opt-img-${i}-${img}`,
+        name: img,
+        url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
+      }));
+      imgs.forEach(i => allKnownImages.add(i));
+      optImgs.forEach(i => allKnownImages.add(i));
+    });
+
+    const publicImgs = [
+      "0401f5f5-ae0d-4bd5-a594-20986816f754.png", "0f4c5edd-24ad-46db-ac17-42c961f7fc80.png",
+      "205e8eba-ba07-4a40-abcb-7ef83f6abef8.png", "2af09c66-4fa5-4a3e-9a87-fa5a915140a1.png",
+      "2b3af826-8c47-4f63-b65c-f000ce7547d8.png", "40c9803c-35eb-4282-a388-00a83bf6ac88.png",
+      "440069c0-0d86-4d0f-b486-a6449ef99928.png", "4dc2d7bb-212e-44fb-93df-d34822fd08c9.png",
+      "51b77b2a-99ca-41ab-b784-f7c99d5df551.png", "54833efb-02f8-47ab-bce7-4d77aa728b73.png",
+      "655ea716-0de0-44f5-b652-a848e14bf77d.png", "68b1465c-6da1-4e4b-8068-7d8ea68398e6.png",
+      "6c266992-68e0-4976-b2cb-6e8d3c5e89bf.png", "6db3d042-b5df-402f-a3f1-1abf322d5cd9.png",
+      "6e306324-6246-4f2a-bcf5-fc12711f5323.png", "720b328c-c1f1-486e-b89e-3fa0d4d0b990.png",
+      "7269f465-4dfa-403b-896a-661f5a38adb5.png", "7422e0a6-7cd1-4702-ab03-df19877dab70.png",
+      "7a6e99fa-2ca0-482b-be1e-d8d36b8370d0.png", "874441ed-958c-43df-a796-2687ff4210cd.png",
+      "8b683377-8ad7-4091-a741-b40d63e60332.png", "8c1004e6-c260-4b8b-abe6-826744bf41b3.png",
+      "8d5da085-05c3-40c6-9665-7c91704898c7.png", "a1ee8240-4bb5-47ee-bd62-02670f5b5b2b.png",
+      "a2c84c7d-9ea6-471c-a7ec-15e47f3ac1f6.png", "a5556a90-f9fb-4977-a827-a693d7156989.png",
+      "b1b18793-b5fd-4376-8476-478155fb0ada.png", "b843c618-2732-4fc9-9e8f-d12a4b42eab2.png",
+      "bd5d5ec5-82c4-4123-a008-fead239d7d86.png", "c064c5aa-8bdd-4989-940a-dce85ba3dc35.png",
+      "cb8e046d-e9d8-4098-8a24-c46cacb2e721.png", "d3cd4a7a-3050-4d6e-9104-bce8f4f5565a.png",
+      "d70b0ee6-30b0-40d9-b973-9d1c7a0151b4.png", "d8226baf-2fce-4559-9b1b-7ea907297e79.png",
+      "df53b41b-dd87-40cc-b6cc-e0846be344b2.png", "e99cc055-96d8-48cd-800e-4213eefa292a.png",
+      "ea4b17f9-e15c-4625-890c-184c7d851c06.png", "f1520de1-d11b-4593-b6dd-6bb342db1a7e.png",
+      "f43fff35-c6b9-43cb-96bf-ac645fceaeee.png", "f756fef5-05fa-42e0-9632-4117e89f819c.png",
+      "fcf0662e-5518-47f1-b5fa-f14345eb435a.png", "fe7da822-77de-4922-af1b-aac6ef810904.png"
+    ];
+
+    const currentUnassigned = initialBoard.unassigned.filter(i => i.id.startsWith('local-'));
+    initialBoard.unassigned = [...currentUnassigned];
+
+    publicImgs.forEach(img => {
+      if (!allKnownImages.has(img)) {
+        initialBoard.unassigned.push({ id: `public-${img}`, name: img, url: `/${img}` });
+      }
+    });
+
+    setBoard(initialBoard);
+    setLoading(false);
+  }, [selectedVersionId, versions]);
+
+  const onDragEnd = (result: DropResult) => {
+    const { source, destination } = result;
+    if (!destination) return;
+    if (source.droppableId === destination.droppableId && source.index === destination.index) return;
+
+    const startList = Array.from(board[source.droppableId] || []);
+    const endList = source.droppableId === destination.droppableId ? startList : Array.from(board[destination.droppableId] || []);
+
+    const [moved] = startList.splice(source.index, 1);
+
+    if (source.droppableId !== destination.droppableId) {
+      endList.splice(destination.index, 0, moved);
+      setBoard(prev => ({
+        ...prev,
+        [source.droppableId]: startList,
+        [destination.droppableId]: endList,
+      }));
+    } else {
+      startList.splice(destination.index, 0, moved);
+      setBoard(prev => ({
+        ...prev,
+        [source.droppableId]: startList,
+      }));
+    }
+  };
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverlay(true);
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.deltaY !== 0) {
+      e.currentTarget.scrollLeft += e.deltaY;
+    }
+  };
+  
+  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverlay(false);
+  };
+  
+  const handleDrop = async (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverlay(false);
+    
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+      if (files.length === 0) return;
+
+      const newItems: Item[] = await Promise.all(files.map(f => {
+        return new Promise<Item>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const result = e.target?.result as string;
+            resolve({
+              id: `local-${Date.now()}-${Math.random()}`,
+              name: f.name,
+              url: result
+            });
+          };
+          reader.readAsDataURL(f);
+        });
+      }));
+
+      setBoard(prev => ({
+        ...prev,
+        unassigned: [...(prev.unassigned || []), ...newItems]
+      }));
+    }
+  };
+
+  const removeItem = (droppableId: string, index: number) => {
+    setBoard(prev => {
+      const newList = [...(prev[droppableId] || [])];
+      newList.splice(index, 1);
+      return { ...prev, [droppableId]: newList };
+    });
+  };
+
+  const updateQuestion = (index: number, field: keyof Question, value: any) => {
+    const updated = [...localQuestions];
+    updated[index] = { ...updated[index], [field]: value };
+    setLocalQuestions(updated);
+  };
+
+  const updateOption = (qIndex: number, optIndex: number, value: string) => {
+    const updated = [...localQuestions];
+    const newOptions = [...updated[qIndex].options];
+    newOptions[optIndex] = value;
+    updated[qIndex].options = newOptions;
+    setLocalQuestions(updated);
+  };
+
+  const addOption = (qIndex: number) => {
+    const updated = [...localQuestions];
+    updated[qIndex].options.push('新选项');
+    setLocalQuestions(updated);
+  };
+
+  const removeOption = (qIndex: number, optIndex: number) => {
+    const updated = [...localQuestions];
+    updated[qIndex].options = updated[qIndex].options.filter((_, i) => i !== optIndex);
+    // Keep answer in bounds
+    if (updated[qIndex].answer >= updated[qIndex].options.length) {
+      updated[qIndex].answer = Math.max(0, updated[qIndex].options.length - 1);
+    }
+    setLocalQuestions(updated);
+  };
+
+  const addQuestion = () => {
+    const newId = Date.now().toString();
+    setLocalQuestions([
+      ...localQuestions, 
+      { id: newId, type: 'single', text: '新题目', options: ['选项A', '选项B', '选项C', '选项D'], answer: 0, score: 2 }
+    ]);
+  };
+
+  const deleteQuestion = (index: number) => {
+    if (window.confirm('确定要删除这道题吗？')) {
+      const updated = [...localQuestions];
+      updated.splice(index, 1);
+      setLocalQuestions(updated);
+    }
+  };
+
+  const createVersion = async () => {
+    const name = window.prompt("请输入新题库名称：");
+    if (!name) return;
+    const newId = 'version-' + Date.now();
+    const currentQuestions = localQuestions.length > 0 ? localQuestions : [];
+    
+    const newVersion: QuizVersion = {
+      id: newId,
+      name: name,
+      questions: currentQuestions
+    };
+    
+    let user = auth.currentUser;
+    if (!user) {
+      try {
+        const provider = new GoogleAuthProvider();
+        const result = await signInWithPopup(auth, provider);
+        user = result.user;
+      } catch (err) {
+        alert("需要登录才能创建");
+        return;
+      }
+    }
+    
+    try {
+      await setDoc(doc(db, 'quizVersions', newId), newVersion);
+      setVersions([...versions, newVersion]);
+      setSelectedVersionId(newId);
+      alert('创建成功！当前题目的配置已复制到新题库中。');
+    } catch(err) {
+      alert("创建失败: " + String(err));
+      handleFirestoreError(err, OperationType.CREATE, 'quizVersions');
+    }
+  };
+
+  const deleteVersion = async () => {
+    if (versions.length <= 1) {
+      alert("请至少保留一个题库！");
+      return;
+    }
+    if (window.confirm(`确定要删除题库 "${versionName}" 吗？此操作不可撤销！`)) {
+      try {
+        await deleteDoc(doc(db, 'quizVersions', selectedVersionId));
+        const newVersions = versions.filter(v => v.id !== selectedVersionId);
+        setVersions(newVersions);
+        setSelectedVersionId(newVersions[0].id);
+        alert('删除成功！');
+      } catch(err) {
+        alert("删除失败: " + String(err));
+        handleFirestoreError(err, OperationType.DELETE, 'quizVersions');
+      }
+    }
+  };
+
+  const handleImportJson = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const content = event.target?.result as string;
+          const parsed = JSON.parse(content);
+          
+          if (parsed.questions && Array.isArray(parsed.questions)) {
+            setLocalQuestions(parsed.questions);
+            if (parsed.name) setVersionName(parsed.name);
+            alert('导入成功！请确认无误后点击同步数据保存。');
+          } else if (Array.isArray(parsed)) {
+            setLocalQuestions(parsed);
+            alert('导入成功！请确认无误后点击同步数据保存。');
+          } else {
+            alert('JSON 格式不正确：找不到题目列表。');
+          }
+        } catch (err) {
+          alert('解析 JSON 失败: ' + String(err));
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
+  const handleExportJson = () => {
+    const exportData = {
+      id: selectedVersionId,
+      name: versionName,
+      questions: localQuestions
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `quiz-${versionName || 'export'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const parseTextToQuestions = (text: string): Question[] => {
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const parsed: Question[] = [];
+    let currentQ: Partial<Question> | null = null;
+    let currentOptions: string[] = [];
+    const globalAnswers: number[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // 匹配全局答案表格 "答案  B  A  B..."
+        const globalAnsMatch = line.match(/^答案\s+(.*)$/);
+        if (globalAnsMatch) {
+             const answersList = globalAnsMatch[1].split(/\s+/).filter(Boolean);
+             answersList.forEach(a => {
+                 const upperA = a.toUpperCase();
+                 let aCode = 0;
+                 if (upperA === '√' || upperA === '对') aCode = 0;
+                 else if (upperA === '×' || upperA === '错') aCode = 1;
+                 else if (upperA.match(/^[A-Z]$/)) aCode = upperA.charCodeAt(0) - 65;
+                 globalAnswers.push(aCode);
+             });
+             continue;
+        }
+
+        // 匹配题号 "1. ", "1、", "1 " 等
+        const qMatch = line.match(/^(\d+)[\.、]?\s+(.*)/) || line.match(/^(\d+)[\.、]\s*(.*)/);
+        if (qMatch) {
+            if (currentQ && (currentOptions.length > 0 || currentQ.type === 'tf')) {
+                currentQ.options = currentOptions.length > 0 ? currentOptions : ['正确', '错误'];
+                parsed.push(currentQ as Question);
+            }
+            currentQ = {
+                id: 'q-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+                type: 'single',
+                text: qMatch[2],
+                options: [],
+                answer: 0,
+                score: 2,
+                images: [],
+                optionImages: []
+            };
+            currentOptions = [];
+            continue;
+        }
+
+        if (!currentQ) continue;
+
+        // 匹配答案 "答案: B", "答案：A"
+        const ansMatch = line.match(/^答案[：:\s]*([A-Z对错√×])/i);
+        if (ansMatch) {
+            const ansStr = ansMatch[1].toUpperCase();
+            if (ansStr === '对' || ansStr === '√') {
+                currentQ.type = 'tf';
+                currentOptions = ['正确', '错误'];
+                currentQ.answer = 0;
+            } else if (ansStr === '错' || ansStr === '×') {
+                currentQ.type = 'tf';
+                currentOptions = ['正确', '错误'];
+                currentQ.answer = 1;
+            } else {
+                currentQ.answer = ansStr.charCodeAt(0) - 65;
+            }
+            if (currentOptions.length > 0 || currentQ.type === 'tf') {
+                currentQ.options = currentOptions.length > 0 ? currentOptions : ['正确', '错误'];
+                parsed.push(currentQ as Question);
+                currentQ = null;
+                currentOptions = [];
+            }
+            continue;
+        }
+
+        // 匹配同行多个选项 A. xxx B. yyy 或 单行选项
+        if (line.match(/[A-F][\.、]/)) {
+            const optMatch = line.match(/^[A-F][\.、]\s*(.*)/);
+            const inlineOpts = line.split(/[A-F][\.、]\s*/).filter(Boolean);
+            if (inlineOpts.length > 1) {
+                inlineOpts.forEach(opt => currentOptions.push(opt.trim()));
+                continue;
+            } else if (optMatch) {
+                currentOptions.push(optMatch[1].trim());
+                continue;
+            }
+        }
+
+        if (currentQ && currentOptions.length === 0 && !line.startsWith('答案')) {
+            currentQ.text += '\n' + line;
+        }
+    }
+
+    if (currentQ && (currentOptions.length > 0 || currentQ.type === 'tf')) {
+        currentQ.options = currentOptions.length > 0 ? currentOptions : ['正确', '错误'];
+        parsed.push(currentQ as Question);
+    }
+
+    parsed.forEach((q, idx) => {
+        if (!q.options || q.options.length === 0) q.options = ['选项A', '选项B', '选项C', '选项D'];
+        
+        if (globalAnswers.length > idx && q.answer === 0 && q.options[0] !== '正确') {
+            q.answer = globalAnswers[idx];
+            if (globalAnswers[idx] === 0 || globalAnswers[idx] === 1) {
+                 if (q.options.length <= 2 && q.options.includes('正确') === false) {
+                    q.type = 'tf';
+                    q.options = ['正确', '错误'];
+                 }
+            }
+        }
+        
+        if (q.answer === undefined || q.answer < 0 || q.answer >= q.options.length) {
+            if (q.type !== 'tf') q.answer = 0;
+        }
+    });
+
+    return parsed;
+  };
+
+  const handleAiImportSubmit = async () => {
+    if (!aiText.trim()) return;
+    setAiLoading(true);
+    
+    // 模拟一下进度反馈
+    await new Promise(r => setTimeout(r, 500));
+    
+    try {
+      const questions = parseTextToQuestions(aiText);
+      if (questions && questions.length > 0) {
+        setLocalQuestions([...localQuestions, ...questions]);
+        alert(`成功解析 ${questions.length} 道题目！小提示：程序自动分段可能会有偏差，请检查选项和答案。`);
+        setAiModalOpen(false);
+        setAiText('');
+      } else {
+        alert('未能识别出任何题目格式。请确保文本采用了如 "1. " 作为题号开头，并指定了 "答案：A"。');
+      }
+    } catch (err: any) {
+      alert('解析出错: ' + err.message);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const saveDataAndFiles = async () => {
+    let user = auth.currentUser;
+    if (!user) {
+      try {
+        const provider = new GoogleAuthProvider();
+        const result = await signInWithPopup(auth, provider);
+        user = result.user;
+      } catch (err) {
+        alert("需要登录才能保存");
+        return;
+      }
+    }
+
+    if (user?.email !== 'candiescot@gmail.com') {
+      alert(`当前登录账号 (${user?.email}) 没有管理权限`);
+      return;
+    }
+
+    try {
+      // 收集并上传新图片至 Firebase
+      const uploads: Promise<void>[] = [];
+      Object.values(board).forEach(list => {
+        list.forEach(item => {
+          if (item.url.startsWith('data:image/')) {
+            const docRef = doc(db, 'images', item.name); 
+            uploads.push(setDoc(docRef, { content: item.url }));
+          }
+        });
+      });
+
+      if (uploads.length > 0) {
+        alert(`正在上传 ${uploads.length} 张图片到 Firebase...`);
+        await Promise.all(uploads);
+      }
+
+      // 更新对应的 QuizVersion
+      const versionToUpdate = {
+        id: selectedVersionId,
+        name: versionName,
+        questions: localQuestions.map(q => {
+          return {
+            ...q,
+            images: (board[`${q.id}-body`] || []).map(i => i.name),
+            optionImages: (board[`${q.id}-options`] || []).map(i => i.name)
+          };
+        })
+      };
+
+      await setDoc(doc(db, 'quizVersions', selectedVersionId), versionToUpdate);
+
+      alert('同步到 Firebase 成功！题库数据已更新。(刷新页面即可生效)');
+      onClose();
+    } catch (err: any) {
+      console.error(err);
+      handleFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
+      alert('保存出错: ' + err.message);
+    }
+  };
+
+  if (loading) return <div className="fixed inset-0 z-[60] bg-white flex items-center justify-center font-bold">加载中...</div>;
+
+  return (
+    <div 
+      className="fixed inset-0 z-[60] bg-[#F1F5F9] flex flex-col"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {dragOverlay && (
+        <div className="absolute inset-0 z-[100] bg-blue-500/20 backdrop-blur-sm border-4 border-dashed border-blue-500 flex items-center justify-center pointer-events-none">
+          <div className="bg-white px-8 py-4 rounded-2xl shadow-xl flex flex-col items-center gap-3">
+            <Plus className="w-12 h-12 text-blue-500" />
+            <span className="text-xl font-bold text-blue-600">松开鼠标上传图片</span>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="shrink-0 bg-white p-4 border-b-2 border-slate-200 shadow-sm flex items-center justify-between">
+        <div className="flex items-center gap-3 px-4">
+          <Edit3 className="w-8 h-8 text-[#FFD600]" />
+          <div>
+            <h1 className="text-xl font-bold font-sans">题库管理面板</h1>
+            <div className="text-xs text-slate-500 mt-1 flex items-center gap-3">
+              <div className="relative inline-flex items-center">
+                <select 
+                  className="appearance-none bg-blue-50 border border-blue-200 text-blue-700 py-1 pl-3 pr-8 rounded-md outline-none text-xs font-bold cursor-pointer"
+                  value={selectedVersionId}
+                  onChange={(e) => setSelectedVersionId(e.target.value)}
+                >
+                  {versions.map(v => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
+                <ChevronDown className="w-3 h-3 absolute right-2 text-blue-600 pointer-events-none" />
+              </div>
+              <button 
+                onClick={createVersion}
+                className="px-2 py-1 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50"
+              >
+                新建题库
+              </button>
+              <button 
+                onClick={deleteVersion}
+                className="px-2 py-1 bg-white border border-red-200 text-red-600 rounded text-xs font-bold hover:bg-red-50"
+              >
+                删除当前题库
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 px-4">
+          <button onClick={() => setAiModalOpen(true)} className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-bold rounded-xl flex items-center gap-2 hover:opacity-90 transition-opacity tooltip" title="粘贴文章/文本，自动解析为题目">
+            <FileJson className="w-4 h-4"/> 文本解析导入
+          </button>
+          <button onClick={handleImportJson} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl flex items-center gap-2 hover:bg-slate-50 transition-colors tooltip" title="从 JSON 文件导入题目">
+            <Upload className="w-4 h-4"/> 导入 JSON
+          </button>
+          <button onClick={handleExportJson} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl flex items-center gap-2 hover:bg-slate-50 transition-colors tooltip" title="导出当前题库为 JSON 文件">
+            <FileJson className="w-4 h-4"/> 导出 JSON
+          </button>
+          <button onClick={saveDataAndFiles} className="px-4 py-2 bg-blue-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-blue-700 active:scale-95 transition-transform"><Download className="w-4 h-4"/> 部署并同步数据</button>
+          <button onClick={onClose} className="w-10 h-10 bg-slate-100 flex items-center justify-center rounded-xl hover:bg-slate-200"><X className="w-5 h-5"/></button>
+        </div>
+      </div>
+
+      {/* AI Import Modal */}
+      {aiModalOpen && (
+        <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-indigo-50 to-purple-50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-500 flex items-center justify-center shadow-lg shadow-purple-500/20">
+                  <FileJson className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800">文本一键提取题目</h2>
+                  <p className="text-xs text-slate-500 mt-1">本功能完全免费在本地运行，使用代码规则（正则）提取题干、选项和答案</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setAiModalOpen(false)} 
+                className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/50 text-slate-500 hover:bg-white hover:text-slate-800 transition-colors"
+                disabled={aiLoading}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 flex-1 overflow-y-auto min-h-[300px]">
+              <textarea 
+                value={aiText}
+                onChange={(e) => setAiText(e.target.value)}
+                className="w-full h-full min-h-[300px] border-2 border-slate-200 rounded-2xl p-4 text-sm resize-none focus:outline-none focus:border-purple-400 focus:ring-4 focus:ring-purple-400/20 transition-all text-slate-700 custom-scrollbar"
+                placeholder="在此粘贴包含题目的纯文本。例如：
+1. 中国的首都是哪里？
+A. 上海
+B. 北京
+C. 广州
+D. 深圳
+答案：B"
+                disabled={aiLoading}
+              />
+            </div>
+            
+            <div className="p-6 border-t border-slate-100 bg-slate-50 flex items-center justify-end gap-3">
+              <button 
+                onClick={() => setAiModalOpen(false)}
+                className="px-6 py-3 font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors"
+                disabled={aiLoading}
+              >
+                取消
+              </button>
+              <button 
+                onClick={handleAiImportSubmit}
+                disabled={!aiText.trim() || aiLoading}
+                className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold rounded-xl flex items-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-500/30"
+              >
+                {aiLoading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    正在全力解析...
+                  </>
+                ) : (
+                  <>
+                    <FileJson className="w-5 h-5" />
+                    开始提取题目
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Body: Drag Drop Context */}
+      <DragDropContext onDragEnd={onDragEnd}>
+        <div className="flex-1 flex overflow-hidden">
+          
+          {/* 左侧：图库 */}
+          <div className="w-1/3 min-w-[300px] max-w-[400px] border-r-2 border-slate-200 bg-white flex flex-col">
+            <div className="p-4 border-b border-slate-100 bg-slate-50 shrink-0">
+              <h2 className="font-bold text-slate-800 text-lg">图库 / 拖拽上传图片</h2>
+              <p className="text-xs text-slate-500 mt-1">可以将本地图片直接拖拽到此面板</p>
+            </div>
+            
+            <Droppable droppableId="unassigned" direction="vertical">
+              {(provided, snapshot) => (
+                <div 
+                  ref={provided.innerRef} 
+                  {...provided.droppableProps}
+                  className={`flex-1 overflow-y-auto p-4 custom-scrollbar transition-colors ${snapshot.isDraggingOver ? 'bg-blue-50/50' : ''}`}
+                >
+                  <div className="grid grid-cols-2 gap-3">
+                    {(board.unassigned || []).map((item, index) => (
+                      <Draggable key={item.id} draggableId={item.id} index={index}>
+                        {(provided, snapshot) => (
+                          <div
+                            ref={provided.innerRef}
+                            {...provided.draggableProps}
+                            {...provided.dragHandleProps}
+                            className={`group relative aspect-square bg-slate-100 rounded-xl overflow-hidden border-2 flex items-center justify-center ${snapshot.isDragging ? 'border-blue-500 shadow-xl scale-105 z-10' : 'border-slate-200 hover:border-slate-300'}`}
+                            style={provided.draggableProps.style}
+                          >
+                            <img src={item.url} alt="" className="max-w-full max-h-full object-contain p-2 pointer-events-none" />
+                            <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-[10px] p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity">
+                              {item.name}
+                            </div>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); removeItem('unassigned', index); }}
+                              className="absolute top-1 right-1 w-6 h-6 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 flex items-center justify-center hover:bg-red-600 transition-opacity shadow-md"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </Draggable>
+                    ))}
+                    {provided.placeholder}
+                  </div>
+                </div>
+              )}
+            </Droppable>
+          </div>
+
+          {/* 右侧：题目编辑列表 */}
+          <div className="flex-1 overflow-y-auto bg-slate-50 p-6 custom-scrollbar">
+            <div className="max-w-4xl mx-auto space-y-6">
+              
+              <div className="bg-white px-6 py-4 border-2 border-slate-200 rounded-2xl shadow-sm flex items-center justify-between">
+                <div className="flex items-center gap-4 flex-1">
+                  <span className="font-bold text-slate-700 shrink-0">题库名称：</span>
+                  <input 
+                    type="text" 
+                    value={versionName} 
+                    onChange={(e) => setVersionName(e.target.value)}
+                    className="flex-1 border border-slate-300 rounded px-3 py-2 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              {localQuestions.map((q, qIndex) => (
+                <div key={q.id} className="bg-white border-2 border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col relative group">
+                  <button 
+                    onClick={() => deleteQuestion(qIndex)}
+                    className="absolute top-4 right-4 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="删除本题"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+
+                  {/* 题目信息编辑 */}
+                  <div className="p-6 border-b border-slate-100 bg-slate-50/50 space-y-4 pr-12">
+                    <div className="flex items-center gap-4">
+                      <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold">[{qIndex + 1}] ID: {q.id}</span>
+                      <select 
+                        value={q.type} 
+                        onChange={(e) => updateQuestion(qIndex, 'type', e.target.value)}
+                        className="bg-white border border-slate-300 text-slate-700 py-1 px-2 rounded text-sm font-bold shadow-sm"
+                      >
+                        <option value="single">单选题 (Single)</option>
+                        <option value="tf">判断题 (True/False)</option>
+                      </select>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-slate-600">分数:</span>
+                        <input 
+                          type="number" 
+                          value={q.score} 
+                          onChange={(e) => updateQuestion(qIndex, 'score', Number(e.target.value))}
+                          className="w-16 border border-slate-300 rounded px-2 py-1 text-sm font-bold"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-700 block">题干文本</label>
+                      <textarea 
+                        value={q.text} 
+                        onChange={(e) => updateQuestion(qIndex, 'text', e.target.value)}
+                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px]"
+                        placeholder="请输入题干内容..."
+                      />
+                    </div>
+                  </div>
+
+                  {/* 选项与图片配图编辑区 */}
+                  <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                    
+                    {/* 选项列表 */}
+                    <div className="flex-1 p-6 space-y-4">
+                      <h3 className="text-sm font-bold text-slate-700 border-b pb-2 mb-4">编辑选项与答案</h3>
+                      {q.options.map((opt, optIndex) => (
+                        <div key={optIndex} className="flex items-center gap-3">
+                          <input 
+                            type="radio" 
+                            name={`answer-${q.id}`} 
+                            checked={q.answer === optIndex} 
+                            onChange={() => updateQuestion(qIndex, 'answer', optIndex)}
+                            className="w-4 h-4 text-blue-600 cursor-pointer"
+                          />
+                          <div className="font-bold text-slate-500 shrink-0 w-6">{String.fromCharCode(65 + optIndex)}.</div>
+                          <input 
+                            type="text" 
+                            value={opt} 
+                            onChange={(e) => updateOption(qIndex, optIndex, e.target.value)}
+                            className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-500"
+                          />
+                          <button onClick={() => removeOption(qIndex, optIndex)} className="text-red-400 hover:text-red-600 shrink-0">
+                            <X className="w-5 h-5" />
+                          </button>
+                        </div>
+                      ))}
+                      {q.type !== 'tf' && (
+                        <button onClick={() => addOption(qIndex)} className="text-blue-600 hover:text-blue-700 text-sm font-bold flex items-center gap-1 mt-2">
+                          <Plus className="w-4 h-4" /> 添加一个选项
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 配图区 */}
+                    <div className="flex-1 p-6 flex flex-col gap-6 bg-slate-50/30">
+                       <div className="flex flex-col gap-2">
+                         <div className="text-xs font-bold text-slate-500 flex items-center justify-between">
+                            <span>题干配图 (正文穿插)</span>
+                         </div>
+                         <Droppable droppableId={`${q.id}-body`} direction="horizontal">
+                           {(provided, snapshot) => (
+                             <div
+                               ref={provided.innerRef}
+                               {...provided.droppableProps}
+                               onWheel={handleWheel}
+                               className={`flex gap-3 overflow-x-auto custom-scrollbar pb-2 transition-colors min-h-[100px] border-2 border-dashed rounded-xl p-2 ${snapshot.isDraggingOver ? 'bg-green-50 border-green-300' : 'border-slate-200 bg-white'}`}
+                             >
+                                {board[`${q.id}-body`]?.length === 0 && !snapshot.isDraggingOver && (
+                                  <div className="flex-1 min-w-[120px] flex items-center justify-center text-slate-400 text-xs font-medium">
+                                    拖拽图片到此
+                                  </div>
+                                )}
+                                {board[`${q.id}-body`]?.map((item, index) => (
+                                  <Draggable key={item.id} draggableId={item.id} index={index}>
+                                    {(provided, snapshot) => (
+                                      <div
+                                        ref={provided.innerRef}
+                                        {...provided.draggableProps}
+                                        {...provided.dragHandleProps}
+                                        className={`group shrink-0 w-20 h-20 bg-white rounded-lg border-2 flex items-center justify-center relative overflow-hidden ${snapshot.isDragging ? 'border-blue-500 shadow-xl z-10' : 'border-slate-200 shadow-sm hover:border-slate-300'}`}
+                                        style={provided.draggableProps.style}
+                                      >
+                                        <img src={item.url} alt="" className="max-w-full max-h-full object-contain p-1 pointer-events-none" />
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); removeItem(`${q.id}-body`, index); }}
+                                          className="absolute top-0 right-0 w-5 h-5 bg-red-500/80 text-white rounded-bl opacity-0 group-hover:opacity-100 flex items-center justify-center hover:bg-red-600 transition-opacity z-20"
+                                        >
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </Draggable>
+                                ))}
+                                {provided.placeholder}
+                             </div>
+                           )}
+                         </Droppable>
+                       </div>
+
+                       {q.type !== 'tf' && (
+                         <div className="flex flex-col gap-2">
+                           <div className="text-xs font-bold text-slate-500">选项配图 (分别在此处对应 A B C D)</div>
+                           <Droppable droppableId={`${q.id}-options`} direction="horizontal">
+                             {(provided, snapshot) => (
+                               <div
+                                 ref={provided.innerRef}
+                                 {...provided.droppableProps}
+                                 onWheel={handleWheel}
+                                 className={`flex gap-3 overflow-x-auto custom-scrollbar pb-2 transition-colors min-h-[100px] border-2 border-dashed rounded-xl p-2 ${snapshot.isDraggingOver ? 'bg-indigo-50 border-indigo-300' : 'border-slate-200 bg-white'}`}
+                               >
+                                  {board[`${q.id}-options`]?.length === 0 && !snapshot.isDraggingOver && (
+                                    <div className="flex-1 min-w-[120px] flex items-center justify-center text-slate-400 text-xs font-medium">
+                                      拖拽图片到此
+                                    </div>
+                                  )}
+                                  {board[`${q.id}-options`]?.map((item, index) => (
+                                    <Draggable key={item.id} draggableId={item.id} index={index}>
+                                      {(provided, snapshot) => {
+                                        const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+                                        const letter = letters[index] || (index+1);
+                                        return (
+                                          <div
+                                            ref={provided.innerRef}
+                                            {...provided.draggableProps}
+                                            {...provided.dragHandleProps}
+                                            className={`group shrink-0 w-20 h-20 bg-white rounded-lg border-2 flex items-center justify-center relative overflow-hidden ${snapshot.isDragging ? 'border-blue-500 shadow-xl z-10' : 'border-slate-200 shadow-sm hover:border-slate-300'}`}
+                                            style={provided.draggableProps.style}
+                                          >
+                                            <img src={item.url} alt="" className="max-w-full max-h-full object-contain p-1 pointer-events-none" />
+                                            <div className="absolute top-0 left-0 bg-black/80 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-br flex items-center justify-center">
+                                              {letter}
+                                            </div>
+                                            <button
+                                              onClick={(e) => { e.stopPropagation(); removeItem(`${q.id}-options`, index); }}
+                                              className="absolute top-0 right-0 w-5 h-5 bg-red-500/80 text-white rounded-bl opacity-0 group-hover:opacity-100 flex items-center justify-center hover:bg-red-600 transition-opacity z-20"
+                                            >
+                                              <X className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                        );
+                                      }}
+                                    </Draggable>
+                                  ))}
+                                  {provided.placeholder}
+                               </div>
+                             )}
+                           </Droppable>
+                         </div>
+                       )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              <button 
+                onClick={addQuestion}
+                className="w-full py-4 border-2 border-dashed border-slate-300 text-slate-500 hover:text-blue-600 hover:border-blue-400 hover:bg-blue-50 font-bold rounded-2xl flex items-center justify-center gap-2 transition-colors"
+               >
+                <Plus className="w-5 h-5" /> 添加新题目
+              </button>
+              
+            </div>
+          </div>
+          
+        </div>
+      </DragDropContext>
+    </div>
+  );
+};
