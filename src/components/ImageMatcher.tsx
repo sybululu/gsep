@@ -229,12 +229,10 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     const name = window.prompt("请输入新题库名称：");
     if (!name) return;
     const newId = 'version-' + Date.now();
-    const currentQuestions = localQuestions.length > 0 ? localQuestions : [];
-    
     const newVersion: QuizVersion = {
       id: newId,
       name: name,
-      questions: currentQuestions
+      questions: []
     };
     
     if (password !== '5834') {
@@ -246,7 +244,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       await setDoc(doc(db, 'quizVersions', newId), newVersion);
       setVersions([...versions, newVersion]);
       setSelectedVersionId(newId);
-      alert('创建成功！当前题目的配置已复制到新题库中。');
+      alert('创建新题库成功！');
     } catch(err) {
       alert("创建失败: " + String(err));
       handleFirestoreError(err, OperationType.CREATE, 'quizVersions');
@@ -341,35 +339,97 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     const parsed: Question[] = [];
     let currentQ: Partial<Question> | null = null;
     let currentOptions: string[] = [];
-    const globalAnswers: number[] = [];
+    const globalAnswers: { qNum?: number, ans: number, isTf?: boolean }[] = [];
+    const seqAnswers: { ans: number, isTf?: boolean }[] = [];
 
-    for (let i = 0; i < lines.length; i++) {
+    // Prepass to consume all unified answers at the bottom of the list
+    for (let i = lines.length - 1; i >= 0; i--) {
         const line = lines[i];
+        let isAnswerLine = false;
 
-        // 匹配全局答案表格 "答案  B  A  B..."
-        const globalAnsMatch = line.match(/^答案\s+(.*)$/);
-        if (globalAnsMatch) {
-             const answersList = globalAnsMatch[1].split(/\s+/).filter(Boolean);
-             answersList.forEach(a => {
-                 const upperA = a.toUpperCase();
-                 let aCode = 0;
-                 if (upperA === '√' || upperA === '对') aCode = 0;
-                 else if (upperA === '×' || upperA === '错') aCode = 1;
-                 else if (upperA.match(/^[A-Z]$/)) aCode = upperA.charCodeAt(0) - 65;
-                 globalAnswers.push(aCode);
-             });
-             continue;
+        const rangeMatch = line.match(/^(\d+)[-~](\d+)[\.、:：\s]*([A-F对错√×\s]+)$/i);
+        if (rangeMatch) {
+            const s = parseInt(rangeMatch[1]);
+            const e = parseInt(rangeMatch[2]);
+            const ansStr = rangeMatch[3].replace(/\s+/g, '').toUpperCase();
+            if (e - s + 1 === ansStr.length) {
+                for(let j=0; j<ansStr.length; j++) {
+                    const aStr = ansStr[j];
+                    const isTf = aStr === '对' || aStr === '√' || aStr === '错' || aStr === '×';
+                    let aCode = (aStr === '对' || aStr === '√') ? 0 : ((aStr === '错' || aStr === '×') ? 1 : aStr.charCodeAt(0) - 65);
+                    globalAnswers.push({qNum: s+j, ans: aCode, isTf});
+                }
+                isAnswerLine = true;
+            }
         }
 
-        // 匹配题号 "1. ", "1、", "1 " 等
+        if (!isAnswerLine && /^[\d\.、:：\sA-F对错√×]+$/i.test(line)) {
+            const inlineAnsRegex = /(\d+)[\.、:：\s]*([A-F对错√×])/gi;
+            const matches = Array.from(line.matchAll(inlineAnsRegex));
+            if (matches.length > 0) {
+                 matches.forEach(m => {
+                      const aStr = m[2].toUpperCase();
+                      const isTf = aStr === '对' || aStr === '√' || aStr === '错' || aStr === '×';
+                      let aCode = (aStr === '对' || aStr === '√') ? 0 : ((aStr === '错' || aStr === '×') ? 1 : aStr.charCodeAt(0) - 65);
+                      globalAnswers.push({qNum: parseInt(m[1]), ans: aCode, isTf});
+                 });
+                 isAnswerLine = true;
+            }
+        }
+
+        if (!isAnswerLine) {
+            const pureAnsMatch = line.match(/^(?:参考答案|答案|答案解析|参考答案及解析)?[：:\s]*([A-F对错√×\s]{2,})$/i);
+            if (pureAnsMatch) {
+                let str = pureAnsMatch[1].trim();
+                let ansList = [];
+                if (/\s/.test(str)) {
+                     ansList = str.split(/\s+/).filter(Boolean);
+                } else {
+                     ansList = str.split('');
+                }
+                
+                const currentLineAnswers = [];
+                for (let j = 0; j < ansList.length; j++) {
+                     const aStr = ansList[j].trim().toUpperCase();
+                     if (!aStr) continue;
+                     const isTf = aStr === '对' || aStr === '√' || aStr === '错' || aStr === '×';
+                     let aCode = (aStr === '对' || aStr === '√') ? 0 : ((aStr === '错' || aStr === '×') ? 1 : aStr.charCodeAt(0) - 65);
+                     currentLineAnswers.push({ans: aCode, isTf});
+                }
+                seqAnswers.unshift(...currentLineAnswers);
+                isAnswerLine = true;
+            }
+        }
+
+        if (!isAnswerLine && /^(?:参考答案|答案|答案解析|参考答案及解析)[：:\s]*$/.test(line)) {
+            isAnswerLine = true;
+        }
+
+        if (isAnswerLine) {
+            lines[i] = '';
+        }
+    }
+
+    const filteredLines = lines.filter(Boolean);
+    
+    for (let i = 0; i < filteredLines.length; i++) {
+        const line = filteredLines[i];
+
         const qMatch = line.match(/^(\d+)[\.、]?\s+(.*)/) || line.match(/^(\d+)[\.、]\s*(.*)/);
         if (qMatch) {
-            if (currentQ && (currentOptions.length > 0 || currentQ.type === 'tf')) {
-                currentQ.options = currentOptions.length > 0 ? currentOptions : ['正确', '错误'];
+            if (currentQ) {
+                if (currentOptions.length > 0) {
+                    currentQ.options = currentOptions;
+                } else if (currentQ.type === 'tf') {
+                    currentQ.options = ['正确', '错误'];
+                } else {
+                    currentQ.options = ['选项A', '选项B', '选项C', '选项D'];
+                }
                 parsed.push(currentQ as Question);
             }
             currentQ = {
                 id: 'q-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9) + '-' + i,
+                qNum: parseInt(qMatch[1]),
                 type: 'single',
                 text: qMatch[2],
                 options: [],
@@ -377,77 +437,84 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
                 score: 2,
                 images: [],
                 optionImages: []
-            };
+            } as any;
             currentOptions = [];
             continue;
         }
 
         if (!currentQ) continue;
 
-        // 匹配答案 "答案: B", "答案：A"
         const ansMatch = line.match(/^答案[：:\s]*([A-Z对错√×])/i);
         if (ansMatch) {
             const ansStr = ansMatch[1].toUpperCase();
             if (ansStr === '对' || ansStr === '√') {
                 currentQ.type = 'tf';
-                currentOptions = ['正确', '错误'];
                 currentQ.answer = 0;
             } else if (ansStr === '错' || ansStr === '×') {
                 currentQ.type = 'tf';
-                currentOptions = ['正确', '错误'];
                 currentQ.answer = 1;
             } else {
+                currentQ.type = 'single';
                 currentQ.answer = ansStr.charCodeAt(0) - 65;
-            }
-            if (currentOptions.length > 0 || currentQ.type === 'tf') {
-                currentQ.options = currentOptions.length > 0 ? currentOptions : ['正确', '错误'];
-                parsed.push(currentQ as Question);
-                currentQ = null;
-                currentOptions = [];
             }
             continue;
         }
 
-        // 匹配同行多个选项 A. xxx B. yyy 或 单行选项
-        const hasAlphabetOpt = /^[A-F][\.、:：]?\s*(.*)/.test(line) || /[A-F][\.、:：\s]/.test(line);
-        if (hasAlphabetOpt && currentQ && currentOptions.length < 10) { // Limit to avoid matching random text too much
-            const optMatch = line.match(/^[A-F][\.、:：]?\s*(.*)/);
-            const inlineOpts = line.split(/[A-F][\.、:：]\s*/).filter(Boolean);
-            if (inlineOpts.length > 1) {
-                inlineOpts.forEach(opt => currentOptions.push(opt.trim()));
-                continue;
-            } else if (optMatch) {
-                currentOptions.push(optMatch[1].trim());
+        if (/^[A-F]([\.、:：]|\s+)/.test(line) && currentQ && currentOptions.length < 10) {
+            const parts = line.split(/(?:\s+)?(?=[A-F](?:[\.、:：]|\s+))/).map(s => s.trim()).filter(s => /^[A-F](?:[\.、:：]|\s+)?/.test(s));
+            if (parts.length > 0) {
+                parts.forEach(part => {
+                    const optMatch = part.match(/^[A-F](?:[\.、:：]|\s+)?\s*(.*)/);
+                    if (optMatch) currentOptions.push(optMatch[1].trim());
+                });
                 continue;
             }
         }
 
-        if (currentQ && currentOptions.length === 0 && !line.startsWith('答案')) {
+        if (!line.startsWith('答案') && !line.startsWith('参考答案')) {
             currentQ.text += '\n' + line;
         }
     }
 
-    if (currentQ && (currentOptions.length > 0 || currentQ.type === 'tf')) {
-        currentQ.options = currentOptions.length > 0 ? currentOptions : ['正确', '错误'];
+    if (currentQ) {
+        if (currentOptions.length > 0) {
+            currentQ.options = currentOptions;
+        } else if (currentQ.type === 'tf') {
+            currentQ.options = ['正确', '错误'];
+        } else {
+            currentQ.options = ['选项A', '选项B', '选项C', '选项D'];
+        }
         parsed.push(currentQ as Question);
     }
-
+    
     parsed.forEach((q, idx) => {
-        if (!q.options || q.options.length === 0) q.options = ['选项A', '选项B', '选项C', '选项D'];
-        
-        if (globalAnswers.length > idx && q.answer === 0 && q.options[0] !== '正确') {
-            q.answer = globalAnswers[idx];
-            if (globalAnswers[idx] === 0 || globalAnswers[idx] === 1) {
-                 if (q.options.length <= 2 && q.options.includes('正确') === false) {
-                    q.type = 'tf';
-                    q.options = ['正确', '错误'];
+        let matchedAns;
+        // Try precise qNum mapping first
+        const pAns = globalAnswers.find(ga => ga.qNum === (q as any).qNum);
+        if (pAns) {
+            matchedAns = pAns;
+        } else if (seqAnswers.length > idx) {
+            matchedAns = seqAnswers[idx];
+        }
+
+        if (matchedAns) {
+             q.answer = matchedAns.ans;
+             if (matchedAns.isTf) {
+                 q.type = 'tf';
+                 q.options = ['正确', '错误'];
+             } else {
+                 // Convert TF back to single if global answer indicates it's single choice A/B/C/D
+                 if (q.type === 'tf') {
+                     q.type = 'single';
+                     q.options = ['选项A', '选项B', '选项C', '选项D']; 
                  }
-            }
+             }
         }
         
-        if (q.answer === undefined || isNaN(q.answer) || q.answer < 0 || q.answer >= q.options.length) {
+        if (q.answer === undefined || isNaN(q.answer) || q.answer < 0 || q.answer >= (q.options?.length || 1)) {
             q.answer = 0;
         }
+        delete (q as any).qNum;
     });
 
     return parsed;
@@ -463,16 +530,26 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     try {
       const questions = parseTextToQuestions(importText);
       if (questions && questions.length > 0) {
+        const shouldOverwrite = window.confirm(`成功提取出 ${questions.length} 道题目！\n\n点击“确定”清空当前题目并替换为您导入的题目；\n点击“取消”则将新题目追加到当前题库的末尾。`);
+        
         setBoard(prev => {
-          const pb = { ...prev };
+          const pb = shouldOverwrite ? { unassigned: [] } : { ...prev };
           questions.forEach(q => {
             pb[`${q.id}-body`] = [];
             pb[`${q.id}-options`] = [];
           });
           return pb;
         });
-        setLocalQuestions([...localQuestions, ...questions]);
-        alert(`成功解析 ${questions.length} 道题目！小提示：程序自动分段可能会有偏差，请检查选项和答案。`);
+        
+        if (shouldOverwrite) {
+            setLocalQuestions(questions);
+        } else {
+            setLocalQuestions([...localQuestions, ...questions]);
+        }
+        
+        // Let's actually save right away so they don't lose it if they exit
+        // We will call saveDataAndFiles logic later, but for now we updated state.
+        
         setTextImportModalOpen(false);
       } else {
         alert('未能识别出任何题目格式。请确保文本采用了如 "1. " 作为题号开头，并指定了 "答案：A"。');
