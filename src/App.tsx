@@ -153,7 +153,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FFFBEB] text-[#1A1A1A] font-sans selection:bg-[#FFD600] selection:text-black">
+    <div className="min-h-screen bg-[#FFFBEB] text-[#1A1A1A] font-sans selection:bg-[#FFD600] selection:text-black flex flex-col">
       {showImageMatcher && <ImageMatcher password={adminPassword} initialVersions={versions} onClose={() => {
         setShowImageMatcher(false);
         // Reload data after edit
@@ -195,7 +195,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-4 py-8">
+      <main className="max-w-3xl w-full mx-auto px-4 py-8 flex-1 flex flex-col">
         {screen === 'start' && (
           <div className="bg-white rounded-[32px] border-4 border-black p-8 sm:p-12 text-center shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="w-20 h-20 bg-[#FFD600] border-4 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] rounded-2xl flex items-center justify-center mx-auto mb-6">
@@ -216,16 +216,16 @@ export default function App() {
         )}
 
         {screen === 'quiz' && (
-          <div className="animate-in fade-in duration-300">
-            <div className="w-full h-4 bg-white border-2 border-black rounded-full overflow-hidden mb-6">
+          <div className="animate-in fade-in duration-300 flex-1 flex flex-col">
+            <div className="w-full shrink-0 h-4 bg-white border-2 border-black rounded-full overflow-hidden mb-6">
               <div 
                 className="h-full bg-[#EC4899] border-r-2 border-black transition-all duration-300"
                 style={{ width: `${((currentQuestionIndex) / totalQuestions) * 100}%` }}
               ></div>
             </div>
 
-            <div className="bg-white rounded-[32px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] border-4 border-black overflow-hidden mb-6">
-              <div className="p-6 sm:p-8 flex flex-col gap-6">
+            <div className="bg-white rounded-[32px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] border-4 border-black overflow-hidden mb-6 flex-1 flex flex-col">
+              <div className="p-6 sm:p-8 flex flex-col gap-6 flex-1">
                 <div className="flex justify-between items-start">
                   <span className="px-4 py-1 bg-[#EC4899] text-white border-2 border-black rounded-full text-xs font-black uppercase">
                     Question {(currentQuestionIndex + 1).toString().padStart(2, '0')} of {totalQuestions}
@@ -243,6 +243,9 @@ export default function App() {
                     const isSelected = answers[currentQuestion.id] === idx;
                     const displayOption = option.replace(/^[A-D]、/, '');
                     const optImg = currentQuestion.optionImages?.[idx];
+                    const isDefaultText = option === `选项${String.fromCharCode(65 + idx)}`;
+                    const hideText = isDefaultText && optImg;
+                    
                     return (
                       <button
                         key={idx}
@@ -259,7 +262,7 @@ export default function App() {
                           {String.fromCharCode(65 + idx)}
                         </div>
                         <div className="flex flex-col items-start w-full">
-                          <span className="font-bold text-left leading-snug">{displayOption}</span>
+                          {!hideText && <span className="font-bold text-left leading-snug">{displayOption}</span>}
                           {optImg && (
                             <OptionImage optImg={optImg} />
                           )}
@@ -271,7 +274,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex justify-center gap-4 mt-8 px-2">
+            <div className="shrink-0 flex justify-center gap-4 mt-8 px-2">
               <button
                 onClick={handlePrev}
                 disabled={currentQuestionIndex === 0}
@@ -289,7 +292,7 @@ export default function App() {
               </button>
             </div>
 
-            <div className="flex justify-between mt-12 px-2 border-t-2 border-dashed border-zinc-300 pt-6">
+            <div className="shrink-0 flex justify-between mt-12 px-2 border-t-2 border-dashed border-zinc-300 pt-6">
               <button
                 onClick={() => setScreen('start')}
                 className="px-6 py-2 bg-red-50 text-red-600 border-2 border-red-200 hover:border-red-600 hover:bg-red-100 rounded-full font-bold text-sm transition-all"
@@ -337,6 +340,12 @@ export default function App() {
                 const displayCorrectAnswer = q.options[q.answer].replace(/^[A-D]、/, '');
                 const displayUserAnswer = userAnswer !== undefined ? q.options[userAnswer].replace(/^[A-D]、/, '') : '未作答';
                 
+                const isCorrectDefaultText = q.options[q.answer] === `选项${String.fromCharCode(65 + q.answer)}`;
+                const hideCorrectText = isCorrectDefaultText && q.optionImages?.[q.answer];
+
+                const isUserDefaultText = userAnswer !== undefined && q.options[userAnswer] === `选项${String.fromCharCode(65 + userAnswer)}`;
+                const hideUserText = isUserDefaultText && q.optionImages?.[userAnswer];
+                
                 return (
                   <div key={q.id} className="bg-white rounded-[32px] border-4 border-black p-6 sm:p-8 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
                     <div className="flex flex-col sm:flex-row items-start gap-6">
@@ -364,7 +373,8 @@ export default function App() {
                           <div className="flex flex-col sm:flex-row sm:items-start gap-2 p-4 bg-zinc-50 border-2 border-dashed border-zinc-300 rounded-2xl">
                             <span className="text-xs font-black uppercase text-zinc-500 whitespace-nowrap mt-1">你的答案</span>
                             <span className={`font-bold ${isCorrect ? 'text-[#3B82F6]' : 'text-[#EF4444]'}`}>
-                              <div>{userAnswer !== undefined ? String.fromCharCode(65 + userAnswer) + ". " + displayUserAnswer : '未作答'}</div>
+                              {!hideUserText && <div>{userAnswer !== undefined ? String.fromCharCode(65 + userAnswer) + ". " + displayUserAnswer : '未作答'}</div>}
+                              {hideUserText && <div>{String.fromCharCode(65 + userAnswer)}. </div>}
                               {userAnswer !== undefined && q.optionImages?.[userAnswer] && (
                                 <OptionImage optImg={q.optionImages[userAnswer]} />
                               )}
@@ -374,7 +384,8 @@ export default function App() {
                             <div className="flex flex-col sm:flex-row sm:items-start gap-2 p-4 bg-[#A78BFA]/10 border-2 border-dashed border-[#A78BFA] rounded-2xl">
                               <span className="text-xs font-black uppercase text-[#A78BFA] whitespace-nowrap mt-1">正确答案</span>
                               <span className="font-bold text-black">
-                                <div>{String.fromCharCode(65 + q.answer)}. {displayCorrectAnswer}</div>
+                                {!hideCorrectText && <div>{String.fromCharCode(65 + q.answer)}. {displayCorrectAnswer}</div>}
+                                {hideCorrectText && <div>{String.fromCharCode(65 + q.answer)}. </div>}
                                 {q.optionImages?.[q.answer] && (
                                   <OptionImage optImg={q.optionImages[q.answer]} />
                                 )}

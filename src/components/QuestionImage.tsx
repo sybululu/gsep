@@ -51,7 +51,7 @@ export const QuestionImage = ({ id, fallbackText, images }: { id: string; fallba
               <img
                 src={srcPath}
                 alt={`题目配图 ${idx + 1}`}
-                className="max-w-full h-auto max-h-[400px] object-contain rounded-lg shadow-sm relative z-10"
+                className="max-w-full h-auto max-h-[400px] object-contain rounded-lg shadow-sm relative"
                 onError={() => setErrorUrls(prev => ({ ...prev, [srcPath]: true }))}
               />
             </div>
@@ -72,7 +72,7 @@ export const QuestionImage = ({ id, fallbackText, images }: { id: string; fallba
         src={`/images/${id}.png`}
         alt={`题目 ${id} 的配图`}
         onError={() => setErrorUrls(prev => ({ ...prev, [`/images/${id}.png`]: true }))}
-        className="max-w-full h-auto max-h-[400px] object-contain rounded-lg shadow-sm relative z-10"
+        className="max-w-full h-auto max-h-[400px] object-contain rounded-lg shadow-sm relative"
       />
       <span className="absolute bottom-2 right-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest hidden sm:block">Visual Aid: /images/{id}.png</span>
     </div>

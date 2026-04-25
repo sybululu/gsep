@@ -237,16 +237,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       questions: currentQuestions
     };
     
-    let user = auth.currentUser;
-    if (!user) {
-      try {
-        const provider = new GoogleAuthProvider();
-        const result = await signInWithPopup(auth, provider);
-        user = result.user;
-      } catch (err) {
-        alert("需要登录才能创建");
-        return;
-      }
+    if (password !== '5834') {
+      alert(`没有操作权限`);
+      return;
     }
     
     try {
@@ -467,20 +460,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   };
 
   const saveDataAndFiles = async () => {
-    let user = auth.currentUser;
-    if (!user) {
-      try {
-        const provider = new GoogleAuthProvider();
-        const result = await signInWithPopup(auth, provider);
-        user = result.user;
-      } catch (err) {
-        alert("需要登录才能保存");
-        return;
-      }
-    }
-
-    if (user?.email !== 'candiescot@gmail.com') {
-      alert(`当前登录账号 (${user?.email}) 没有管理权限`);
+    if (password !== '5834') {
+      alert(`没有操作权限`);
       return;
     }
 
