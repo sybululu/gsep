@@ -27,9 +27,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [board, setBoard] = useState<Board>({ unassigned: [] });
   const [loading, setLoading] = useState(true);
   const [dragOverlay, setDragOverlay] = useState(false);
-  const [aiModalOpen, setAiModalOpen] = useState(false);
-  const [aiText, setAiText] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
+  const [textImportModalOpen, setTextImportModalOpen] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importLoading, setImportLoading] = useState(false);
 
   useEffect(() => {
     if (!selectedVersionId) return;
@@ -258,13 +258,30 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       alert("请至少保留一个题库！");
       return;
     }
-    if (window.confirm(`确定要删除题库 "${versionName}" 吗？此操作不可撤销！`)) {
+    if (window.confirm(`确定要删除题库 "${versionName}" 吗？此操作不可撤销将会同步删除云端数据和包含的图片！`)) {
       try {
+        const versionToDelete = versions.find(v => v.id === selectedVersionId);
+        if (versionToDelete && versionToDelete.questions) {
+          // 删除关联的图片
+          const imagesToDelete = new Set<string>();
+          versionToDelete.questions.forEach(q => {
+            if (q.images) q.images.forEach(img => imagesToDelete.add(img));
+            if (q.optionImages) q.optionImages.forEach(img => imagesToDelete.add(img));
+          });
+          
+          if (imagesToDelete.size > 0) {
+            const deleteImagePromises = Array.from(imagesToDelete).filter(img => !img.startsWith('/') && !img.startsWith('data:')).map(img => deleteDoc(doc(db, 'images', img)).catch(e => console.error("Failed to delete image: ", e)));
+            await Promise.all(deleteImagePromises);
+          }
+        }
+
         await deleteDoc(doc(db, 'quizVersions', selectedVersionId));
         const newVersions = versions.filter(v => v.id !== selectedVersionId);
         setVersions(newVersions);
-        setSelectedVersionId(newVersions[0].id);
-        alert('删除成功！');
+        if (newVersions.length > 0) {
+          setSelectedVersionId(newVersions[0].id);
+        }
+        alert('删除成功！关联数据和图片已同步删除。');
       } catch(err) {
         alert("删除失败: " + String(err));
         handleFirestoreError(err, OperationType.DELETE, 'quizVersions');
@@ -352,7 +369,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
                 parsed.push(currentQ as Question);
             }
             currentQ = {
-                id: 'q-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+                id: 'q-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9) + '-' + i,
                 type: 'single',
                 text: qMatch[2],
                 options: [],
@@ -392,9 +409,10 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         }
 
         // 匹配同行多个选项 A. xxx B. yyy 或 单行选项
-        if (line.match(/[A-F][\.、]/)) {
-            const optMatch = line.match(/^[A-F][\.、]\s*(.*)/);
-            const inlineOpts = line.split(/[A-F][\.、]\s*/).filter(Boolean);
+        const hasAlphabetOpt = /^[A-F][\.、:：]?\s*(.*)/.test(line) || /[A-F][\.、:：\s]/.test(line);
+        if (hasAlphabetOpt && currentQ && currentOptions.length < 10) { // Limit to avoid matching random text too much
+            const optMatch = line.match(/^[A-F][\.、:：]?\s*(.*)/);
+            const inlineOpts = line.split(/[A-F][\.、:：]\s*/).filter(Boolean);
             if (inlineOpts.length > 1) {
                 inlineOpts.forEach(opt => currentOptions.push(opt.trim()));
                 continue;
@@ -427,35 +445,42 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
             }
         }
         
-        if (q.answer === undefined || q.answer < 0 || q.answer >= q.options.length) {
-            if (q.type !== 'tf') q.answer = 0;
+        if (q.answer === undefined || isNaN(q.answer) || q.answer < 0 || q.answer >= q.options.length) {
+            q.answer = 0;
         }
     });
 
     return parsed;
   };
 
-  const handleAiImportSubmit = async () => {
-    if (!aiText.trim()) return;
-    setAiLoading(true);
+  const handleTextImportSubmit = async () => {
+    if (!importText.trim()) return;
+    setImportLoading(true);
     
     // 模拟一下进度反馈
     await new Promise(r => setTimeout(r, 500));
     
     try {
-      const questions = parseTextToQuestions(aiText);
+      const questions = parseTextToQuestions(importText);
       if (questions && questions.length > 0) {
+        setBoard(prev => {
+          const pb = { ...prev };
+          questions.forEach(q => {
+            pb[`${q.id}-body`] = [];
+            pb[`${q.id}-options`] = [];
+          });
+          return pb;
+        });
         setLocalQuestions([...localQuestions, ...questions]);
         alert(`成功解析 ${questions.length} 道题目！小提示：程序自动分段可能会有偏差，请检查选项和答案。`);
-        setAiModalOpen(false);
-        setAiText('');
+        setTextImportModalOpen(false);
       } else {
         alert('未能识别出任何题目格式。请确保文本采用了如 "1. " 作为题号开头，并指定了 "答案：A"。');
       }
     } catch (err: any) {
       alert('解析出错: ' + err.message);
     } finally {
-      setAiLoading(false);
+      setImportLoading(false);
     }
   };
 
@@ -559,8 +584,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           </div>
         </div>
         <div className="flex items-center gap-3 px-4">
-          <button onClick={() => setAiModalOpen(true)} className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-bold rounded-xl flex items-center gap-2 hover:opacity-90 transition-opacity tooltip" title="粘贴文章/文本，自动解析为题目">
-            <FileJson className="w-4 h-4"/> 文本解析导入
+          <button onClick={() => setTextImportModalOpen(true)} className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-bold rounded-xl flex items-center gap-2 hover:opacity-90 transition-opacity tooltip" title="粘贴文章/文本，自动解析为题目">
+            <FileJson className="w-4 h-4"/> "文本导入"
           </button>
           <button onClick={handleImportJson} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl flex items-center gap-2 hover:bg-slate-50 transition-colors tooltip" title="从 JSON 文件导入题目">
             <Upload className="w-4 h-4"/> 导入 JSON
@@ -573,8 +598,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         </div>
       </div>
 
-      {/* AI Import Modal */}
-      {aiModalOpen && (
+      {/* "Text Import Modal" */}
+      {textImportModalOpen && (
         <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
             <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-indigo-50 to-purple-50">
@@ -588,9 +613,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
                 </div>
               </div>
               <button 
-                onClick={() => setAiModalOpen(false)} 
+                onClick={() => setTextImportModalOpen(false)} 
                 className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/50 text-slate-500 hover:bg-white hover:text-slate-800 transition-colors"
-                disabled={aiLoading}
+                disabled={importLoading}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -598,8 +623,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
             
             <div className="p-6 flex-1 overflow-y-auto min-h-[300px]">
               <textarea 
-                value={aiText}
-                onChange={(e) => setAiText(e.target.value)}
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
                 className="w-full h-full min-h-[300px] border-2 border-slate-200 rounded-2xl p-4 text-sm resize-none focus:outline-none focus:border-purple-400 focus:ring-4 focus:ring-purple-400/20 transition-all text-slate-700 custom-scrollbar"
                 placeholder="在此粘贴包含题目的纯文本。例如：
 1. 中国的首都是哪里？
@@ -608,24 +633,24 @@ B. 北京
 C. 广州
 D. 深圳
 答案：B"
-                disabled={aiLoading}
+                disabled={importLoading}
               />
             </div>
             
             <div className="p-6 border-t border-slate-100 bg-slate-50 flex items-center justify-end gap-3">
               <button 
-                onClick={() => setAiModalOpen(false)}
+                onClick={() => setTextImportModalOpen(false)}
                 className="px-6 py-3 font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors"
-                disabled={aiLoading}
+                disabled={importLoading}
               >
                 取消
               </button>
               <button 
-                onClick={handleAiImportSubmit}
-                disabled={!aiText.trim() || aiLoading}
+                onClick={handleTextImportSubmit}
+                disabled={!importText.trim() || importLoading}
                 className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold rounded-xl flex items-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-500/30"
               >
-                {aiLoading ? (
+                {importLoading ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
                     正在全力解析...
@@ -773,6 +798,7 @@ D. 深圳
                             value={opt} 
                             onChange={(e) => updateOption(qIndex, optIndex, e.target.value)}
                             className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-500"
+                            placeholder={`选项 ${String.fromCharCode(65 + optIndex)} 内容 (如有配图可留空)`}
                           />
                           <button onClick={() => removeOption(qIndex, optIndex)} className="text-red-400 hover:text-red-600 shrink-0">
                             <X className="w-5 h-5" />

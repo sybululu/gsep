@@ -4,7 +4,7 @@ import { quizVersions as initialQuizVersions, QuizVersion, Question } from './da
 import { QuestionImage } from './components/QuestionImage';
 
 import { ImageMatcher } from './components/ImageMatcher';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { handleFirestoreError, OperationType } from './utils/firestoreErrorHandler';
 
@@ -207,7 +207,8 @@ export default function App() {
             </p>
             <button
               onClick={handleStart}
-              className="inline-flex items-center gap-2 bg-[#3B82F6] hover:bg-blue-600 hover:translate-y-[-2px] text-white border-4 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] px-8 py-4 rounded-full font-black uppercase transition-all active:translate-y-[2px] active:shadow-none"
+              disabled={totalQuestions === 0}
+              className="inline-flex items-center gap-2 bg-[#3B82F6] hover:bg-blue-600 hover:translate-y-[-2px] text-white border-4 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] px-8 py-4 rounded-full font-black uppercase transition-all active:translate-y-[2px] active:shadow-none disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:shadow-none"
             >
               <Play className="w-5 h-5 fill-current" />
               <span>进入测试</span>
@@ -216,96 +217,105 @@ export default function App() {
         )}
 
         {screen === 'quiz' && (
-          <div className="animate-in fade-in duration-300 flex-1 flex flex-col">
-            <div className="w-full shrink-0 h-4 bg-white border-2 border-black rounded-full overflow-hidden mb-6">
-              <div 
-                className="h-full bg-[#EC4899] border-r-2 border-black transition-all duration-300"
-                style={{ width: `${((currentQuestionIndex) / totalQuestions) * 100}%` }}
-              ></div>
-            </div>
-
-            <div className="bg-white rounded-[32px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] border-4 border-black overflow-hidden mb-6 flex-1 flex flex-col">
-              <div className="p-6 sm:p-8 flex flex-col gap-6 flex-1">
-                <div className="flex justify-between items-start">
-                  <span className="px-4 py-1 bg-[#EC4899] text-white border-2 border-black rounded-full text-xs font-black uppercase">
-                    Question {(currentQuestionIndex + 1).toString().padStart(2, '0')} of {totalQuestions}
-                  </span>
-                  <span className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{currentQuestion.type === 'single' ? '单选题' : '判断题'} ({currentQuestion.score}分)</span>
-                </div>
-                <h2 className="text-2xl font-bold leading-tight">
-                  {currentQuestion.text}
-                </h2>
-
-                <QuestionImage id={currentQuestion.id} fallbackText={currentQuestion.imageFallbackText} images={currentQuestion.images} />
-                
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
-                  {currentQuestion.options.map((option, idx) => {
-                    const isSelected = answers[currentQuestion.id] === idx;
-                    const displayOption = option.replace(/^[A-D]、/, '');
-                    const optImg = currentQuestion.optionImages?.[idx];
-                    const isDefaultText = option === `选项${String.fromCharCode(65 + idx)}`;
-                    const hideText = isDefaultText && optImg;
-                    
-                    return (
-                      <button
-                        key={idx}
-                        onClick={() => handleAnswerSelect(idx)}
-                        className={`p-4 border-2 border-black rounded-xl flex items-center gap-4 transition-all group overflow-hidden ${
-                          isSelected 
-                            ? 'bg-[#3B82F6] text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] translate-y-[-2px]' 
-                            : 'bg-white hover:bg-[#3B82F6] hover:text-white'
-                        }`}
-                      >
-                        <div className={`w-8 h-8 shrink-0 rounded-full border-2 border-black flex items-center justify-center font-black transition-colors ${
-                          isSelected ? 'bg-white text-black' : 'group-hover:bg-white group-hover:text-black bg-zinc-100 text-black'
-                        }`}>
-                          {String.fromCharCode(65 + idx)}
-                        </div>
-                        <div className="flex flex-col items-start w-full">
-                          {!hideText && <span className="font-bold text-left leading-snug">{displayOption}</span>}
-                          {optImg && (
-                            <OptionImage optImg={optImg} />
-                          )}
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
+          <div className="flex-1 flex flex-col animate-in fade-in duration-300">
+            {totalQuestions === 0 || !currentQuestion ? (
+              <div className="flex-1 flex items-center justify-center flex-col gap-4">
+                <p className="text-xl font-bold text-zinc-500">当前题库为空，没有可以作答的题目。</p>
+                <button onClick={() => setScreen('start')} className="px-6 py-3 bg-[#3B82F6] text-white font-bold rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[-2px] active:translate-y-0 active:shadow-none transition-all">返回主页</button>
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="w-full shrink-0 h-4 bg-white border-2 border-black rounded-full overflow-hidden mb-6">
+                  <div 
+                    className="h-full bg-[#EC4899] border-r-2 border-black transition-all duration-300"
+                    style={{ width: `${((currentQuestionIndex) / totalQuestions) * 100}%` }}
+                  ></div>
+                </div>
 
-            <div className="shrink-0 flex justify-center gap-4 mt-8 px-2">
-              <button
-                onClick={handlePrev}
-                disabled={currentQuestionIndex === 0}
-                className="px-8 py-3 bg-white border-2 border-black rounded-full font-black text-sm uppercase hover:translate-y-[-2px] transition-all disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed"
-              >
-                上一题
-              </button>
-              
-              <button
-                onClick={handleNext}
-                disabled={answers[currentQuestion.id] === undefined && !isLastQuestion}
-                className="px-8 py-3 bg-black text-white border-2 border-black rounded-full font-black text-sm uppercase hover:translate-y-[-2px] transition-all disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed shadow-[4px_4px_0px_0px_rgba(59,130,246,1)] disabled:shadow-none"
-              >
-                {isLastQuestion ? '提交试卷' : '下一题'}
-              </button>
-            </div>
+                <div className="bg-white rounded-[32px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] border-4 border-black overflow-hidden mb-6 flex-1 flex flex-col">
+                  <div className="p-6 sm:p-8 flex flex-col gap-6 flex-1">
+                    <div className="flex justify-between items-start">
+                      <span className="px-4 py-1 bg-[#EC4899] text-white border-2 border-black rounded-full text-xs font-black uppercase">
+                        Question {(currentQuestionIndex + 1).toString().padStart(2, '0')} of {totalQuestions}
+                      </span>
+                      <span className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{currentQuestion.type === 'single' ? '单选题' : '判断题'} ({currentQuestion.score}分)</span>
+                    </div>
+                    <h2 className="text-2xl font-bold leading-tight">
+                      {currentQuestion.text}
+                    </h2>
 
-            <div className="shrink-0 flex justify-between mt-12 px-2 border-t-2 border-dashed border-zinc-300 pt-6">
-              <button
-                onClick={() => setScreen('start')}
-                className="px-6 py-2 bg-red-50 text-red-600 border-2 border-red-200 hover:border-red-600 hover:bg-red-100 rounded-full font-bold text-sm transition-all"
-              >
-                退出考试
-              </button>
-              <button
-                onClick={handleRestartQuiz}
-                className="px-6 py-2 bg-zinc-50 text-zinc-600 border-2 border-zinc-200 hover:border-black hover:text-black rounded-full font-bold text-sm transition-all flex items-center gap-2"
-              >
-                <RotateCcw className="w-4 h-4" />重新考试
-              </button>
-            </div>
+                    <QuestionImage id={currentQuestion.id} fallbackText={currentQuestion.imageFallbackText} images={currentQuestion.images} />
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+                      {currentQuestion.options.map((option, idx) => {
+                        const isSelected = answers[currentQuestion.id] === idx;
+                        const displayOption = option?.replace ? option.replace(/^[A-D]、/, '') : String(option);
+                        const optImg = currentQuestion.optionImages?.[idx];
+                        const isDefaultText = option === `选项${String.fromCharCode(65 + idx)}` || (typeof option === 'string' && option.trim() === String.fromCharCode(65 + idx)) || (typeof option === 'string' && option.trim() === '');
+                        const hideText = isDefaultText;
+                        
+                        return (
+                          <button
+                            key={idx}
+                            onClick={() => handleAnswerSelect(idx)}
+                            className={`p-4 border-2 border-black rounded-xl flex items-center gap-4 transition-all group overflow-hidden ${
+                              isSelected 
+                                ? 'bg-[#3B82F6] text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] translate-y-[-2px]' 
+                                : 'bg-white hover:bg-[#3B82F6] hover:text-white'
+                            }`}
+                          >
+                            <div className={`w-8 h-8 shrink-0 rounded-full border-2 border-black flex items-center justify-center font-black transition-colors ${
+                              isSelected ? 'bg-white text-black' : 'group-hover:bg-white group-hover:text-black bg-zinc-100 text-black'
+                            }`}>
+                              {String.fromCharCode(65 + idx)}
+                            </div>
+                            <div className="flex flex-col items-start w-full">
+                              {!hideText && <span className="font-bold text-left leading-snug">{displayOption}</span>}
+                              {optImg && (
+                                <OptionImage optImg={optImg} />
+                              )}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="shrink-0 flex justify-center gap-4 mt-8 px-2">
+                  <button
+                    onClick={handlePrev}
+                    disabled={currentQuestionIndex === 0}
+                    className="px-8 py-3 bg-white border-2 border-black rounded-full font-black text-sm uppercase hover:translate-y-[-2px] transition-all disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed"
+                  >
+                    上一题
+                  </button>
+                  
+                  <button
+                    onClick={handleNext}
+                    disabled={answers[currentQuestion.id] === undefined && !isLastQuestion}
+                    className="px-8 py-3 bg-black text-white border-2 border-black rounded-full font-black text-sm uppercase hover:translate-y-[-2px] transition-all disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed shadow-[4px_4px_0px_0px_rgba(59,130,246,1)] disabled:shadow-none"
+                  >
+                    {isLastQuestion ? '提交试卷' : '下一题'}
+                  </button>
+                </div>
+
+                <div className="shrink-0 flex justify-between mt-12 px-2 border-t-2 border-dashed border-zinc-300 pt-6">
+                  <button
+                    onClick={() => setScreen('start')}
+                    className="px-6 py-2 bg-red-50 text-red-600 border-2 border-red-200 hover:border-red-600 hover:bg-red-100 rounded-full font-bold text-sm transition-all"
+                  >
+                    退出考试
+                  </button>
+                  <button
+                    onClick={handleRestartQuiz}
+                    className="px-6 py-2 bg-zinc-50 text-zinc-600 border-2 border-zinc-200 hover:border-black hover:text-black rounded-full font-bold text-sm transition-all flex items-center gap-2"
+                  >
+                    <RotateCcw className="w-4 h-4" />重新考试
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -337,14 +347,18 @@ export default function App() {
               {questions.map((q, idx) => {
                 const userAnswer = answers[q.id];
                 const isCorrect = userAnswer === q.answer;
-                const displayCorrectAnswer = q.options[q.answer].replace(/^[A-D]、/, '');
-                const displayUserAnswer = userAnswer !== undefined ? q.options[userAnswer].replace(/^[A-D]、/, '') : '未作答';
                 
-                const isCorrectDefaultText = q.options[q.answer] === `选项${String.fromCharCode(65 + q.answer)}`;
-                const hideCorrectText = isCorrectDefaultText && q.optionImages?.[q.answer];
+                const optCorrect = q.options[q.answer] || '';
+                const displayCorrectAnswer = optCorrect.replace(/^[A-D]、/, '');
+                
+                const optUser = userAnswer !== undefined ? (q.options[userAnswer] || '') : '';
+                const displayUserAnswer = userAnswer !== undefined ? optUser.replace(/^[A-D]、/, '') : '未作答';
+                
+                const isCorrectDefaultText = optCorrect === `选项${String.fromCharCode(65 + q.answer)}` || optCorrect.trim() === String.fromCharCode(65 + q.answer) || optCorrect.trim() === '';
+                const hideCorrectText = isCorrectDefaultText;
 
-                const isUserDefaultText = userAnswer !== undefined && q.options[userAnswer] === `选项${String.fromCharCode(65 + userAnswer)}`;
-                const hideUserText = isUserDefaultText && q.optionImages?.[userAnswer];
+                const isUserDefaultText = userAnswer !== undefined && (optUser === `选项${String.fromCharCode(65 + userAnswer)}` || optUser.trim() === String.fromCharCode(65 + userAnswer) || optUser.trim() === '');
+                const hideUserText = isUserDefaultText;
                 
                 return (
                   <div key={q.id} className="bg-white rounded-[32px] border-4 border-black p-6 sm:p-8 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
@@ -374,7 +388,7 @@ export default function App() {
                             <span className="text-xs font-black uppercase text-zinc-500 whitespace-nowrap mt-1">你的答案</span>
                             <span className={`font-bold ${isCorrect ? 'text-[#3B82F6]' : 'text-[#EF4444]'}`}>
                               {!hideUserText && <div>{userAnswer !== undefined ? String.fromCharCode(65 + userAnswer) + ". " + displayUserAnswer : '未作答'}</div>}
-                              {hideUserText && <div>{String.fromCharCode(65 + userAnswer)}. </div>}
+                              {hideUserText && <div>{userAnswer !== undefined ? String.fromCharCode(65 + userAnswer) + ". " : '未作答'}</div>}
                               {userAnswer !== undefined && q.optionImages?.[userAnswer] && (
                                 <OptionImage optImg={q.optionImages[userAnswer]} />
                               )}
