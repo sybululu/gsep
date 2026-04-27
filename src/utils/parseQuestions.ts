@@ -18,7 +18,6 @@ export const parseTextToQuestions = (text: string): Question[] => {
       let str = pureAnsMatch[1].trim();
       let ansList: string[] = /\s/.test(str) ? str.split(/\s+/) : str.split('');
       
-      // 逆序提取，保持原顺序
       for (let j = ansList.length - 1; j >= 0; j--) {
         const aStr = ansList[j].trim().toUpperCase();
         if (!aStr) continue;
@@ -27,7 +26,6 @@ export const parseTextToQuestions = (text: string): Question[] => {
         allSeqAnswers.push({ ans: aCode, isTf });
       }
       lines[i] = '';
-      continue;
     }
   }
 
@@ -45,16 +43,37 @@ export const parseTextToQuestions = (text: string): Question[] => {
   const parsed: Question[] = [];
   let currentQ: any = null;
   let currentOptions: string[] = [];
+  
+  // 只在单选题或判断题区域内才识别题目
+  let inSingleSection = false;
   let inTfSection = false;
 
   for (let i = 0; i < filteredLines.length; i++) {
     const line = filteredLines[i];
 
-    // Section detection
+    // Section detection - 只识别一、二章节的题目
+    if (/^一/.test(line) && /单选/.test(line)) {
+      inSingleSection = true;
+      inTfSection = false;
+      continue;
+    }
     if (/^二/.test(line) && /判断/.test(line)) {
+      inSingleSection = false;
       inTfSection = true;
       continue;
     }
+    // 遇到其他章节标题，重置状态
+    if (/^[三四五六七八九十]+[、.]/.test(line) && !inSingleSection && !inTfSection) {
+      continue;
+    }
+    if (/^[三四五六七八九十]、/.test(line)) {
+      inSingleSection = false;
+      inTfSection = false;
+      continue;
+    }
+
+    // 如果不在单选题或判断题区域，跳过
+    if (!inSingleSection && !inTfSection) continue;
 
     // Match question line
     const qMatch = line.match(/^[\(（\[【]?(\d+)[\)）\]】]?[\.、:：]\s*(.*)/);
@@ -114,7 +133,7 @@ export const parseTextToQuestions = (text: string): Question[] => {
   }
 
   // Apply answers based on type
-  parsed.forEach((q, idx) => {
+  parsed.forEach((q) => {
     if (q.type === 'tf' && tfIdx < tfAnswers.length) {
       q.answer = tfAnswers[tfIdx++].ans;
     } else if (q.type === 'single' && singleIdx < singleAnswers.length) {
