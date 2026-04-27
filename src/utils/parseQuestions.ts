@@ -95,7 +95,7 @@ export const parseTextToQuestions = (text: string): Question[] => {
         text: qMatch[2],
         options: [],
         answer: 0,
-        score: 2,
+        score: inTfSection ? 4 : 2,
         images: [],
         optionImages: []
       };
