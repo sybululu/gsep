@@ -682,7 +682,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
               </button>
               <button 
                 onClick={deleteVersion}
-                className="px-2 py-1 bg-white border border-red-200 text-red-600 rounded text-xs font-bold hover:bg-red-50"
+                className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 shadow-sm"
               >
                 删除当前题库
               </button>
