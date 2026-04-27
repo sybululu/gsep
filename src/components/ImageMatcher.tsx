@@ -426,6 +426,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   };
 
   const handleCloudLogin = async () => {
+    console.log('handleCloudLogin called, password:', password, 'ADMIN_PASSWORD:', ADMIN_PASSWORD);
     await ensureAdminSignedIn();
   };
 
