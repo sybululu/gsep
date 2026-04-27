@@ -8,20 +8,9 @@ export const parseTextToQuestions = (text: string): Question[] => {
 
   // Prepass: extract all answers
   const allSeqAnswers: { ans: number; isTf: boolean }[] = [];
-  let currentSection: 'single' | 'tf' | 'unknown' = 'unknown';
 
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
-
-    // Detect section headers
-    if (/^一/.test(line) && /单选/.test(line)) {
-      currentSection = 'tf'; // 判断题在后面，先碰到说明当前是单选题
-      continue;
-    }
-    if (/^二/.test(line) && /判断/.test(line)) {
-      currentSection = 'tf';
-      continue;
-    }
 
     // Pure answer format: 答案：B A B A 或 答案：√ √ ×
     const pureAnsMatch = line.match(/^(?:参考答案|答案)[：:\s]*([A-F对错√×\s]{2,})$/i);
