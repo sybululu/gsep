@@ -1,7 +1,6 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default-deny catch-all
     match /{document=**} {
       allow read, write: if false;
     }
@@ -26,14 +25,13 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // Question Entity Validation Helper (simplified array checks per Firebase limits)
     function isValidQuestion(q) {
       return q is map &&
              q.keys().hasAll(['id', 'type', 'text', 'options', 'answer', 'score']) &&
              q.id is string && q.id.size() <= 128 &&
-             q.type is string && q.type.size() <= 10 &&
-             q.text is string && q.text.size() <= 2000 &&
-             q.options is list && q.options.size() <= 10 &&
+             q.type in ['single', 'tf'] &&
+             q.text is string && q.text.size() <= 8000 &&
+             q.options is list && q.options.size() >= 2 && q.options.size() <= 10 &&
              q.answer is number &&
              q.score is number;
     }
@@ -43,15 +41,14 @@ service cloud.firestore {
              data.keys().size() == 3 &&
              data.id is string && data.id.size() <= 128 &&
              data.name is string && data.name.size() <= 100 &&
-             data.questions is list && data.questions.size() <= 50;
+             data.questions is list && data.questions.size() <= 300;
     }
 
     match /quizVersions/{versionId} {
-      // The quiz app is public-read, but writes must come from the admin account.
       allow get, list: if true;
-      allow create: if isAdmin() && isValidId(versionId) && isValidQuizVersion(incoming());
-      allow update: if isAdmin() && isValidId(versionId) && isValidQuizVersion(incoming()) && (
-        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'questions'])
+      allow create: if isAdmin() && isValidId(versionId) && incoming().id == versionId && isValidQuizVersion(incoming());
+      allow update: if isAdmin() && isValidId(versionId) && incoming().id == versionId && isValidQuizVersion(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['id', 'name', 'questions'])
       );
       allow delete: if isAdmin() && isValidId(versionId);
     }
@@ -59,11 +56,10 @@ service cloud.firestore {
     function isValidImage(data) {
       return data.keys().hasAll(['content']) &&
              data.keys().size() == 1 &&
-             data.content is string && data.content.size() <= 800000; // ~800KB max for base64
+             data.content is string && data.content.size() <= 800000;
     }
 
     match /images/{imageId} {
-      // The quiz app is public-read, but writes must come from the admin account.
       allow get, list: if true;
       allow create: if isAdmin() && isValidId(imageId) && isValidImage(incoming());
       allow update: if isAdmin() && isValidId(imageId) && isValidImage(incoming()) && (
