@@ -1,22 +1,41 @@
 import React, { useState, useEffect, DragEvent } from 'react';
-import { QuizVersion, Question, QuestionType } from '../data';
-import { Image as ImageIcon, Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Settings, Wand2, Loader2 } from 'lucide-react';
+import { QuizVersion, Question } from '../data';
+import { Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Loader2 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { doc, setDoc, deleteDoc } from 'firebase/firestore';
-import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
+import { parseTextToQuestions as parseQuestionText } from '../utils/parseQuestions';
+
+const SafeDraggable = Draggable as React.ComponentType<any>;
 
 interface Item {
   id: string; // The image url or local base64
-  name: string; // firestore image document id
-  displayName?: string; // ui display name
+  name: string; // display name
   url: string; // src
 }
 
 interface Board {
   [key: string]: Item[];
 }
+
+const ADMIN_PASSWORD = '5834';
+const MAX_FIRESTORE_IMAGE_BYTES = 560_000;
+const MAX_FIRESTORE_IMAGE_LABEL = '550KB';
+const PUBLIC_IMAGE_RE = /^[\w-]+\.(png|jpe?g|gif|webp|svg)$/i;
+
+const makeImageDocName = (file: File) => {
+  const safeBase = file.name
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-z0-9_-]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'image';
+
+  return `${safeBase}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+};
+
+const dataUrlBytes = (value: string) => Math.ceil(value.length * 0.75);
 
 export const ImageMatcher = ({ password, initialVersions, onClose }: { password?: string, initialVersions: QuizVersion[], onClose: () => void }) => {
   const [versions, setVersions] = useState<QuizVersion[]>(initialVersions);
@@ -31,69 +50,6 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [textImportModalOpen, setTextImportModalOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importLoading, setImportLoading] = useState(false);
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(auth.currentUser?.email || null);
-
-  const toValidFirestoreId = (raw: string, fallbackPrefix = 'img') => {
-    const cleaned = raw
-      .trim()
-      .replace(/\.[a-z0-9]+$/i, '')
-      .replace(/[^a-zA-Z0-9_-]/g, '_')
-      .replace(/_+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .slice(0, 100);
-    return cleaned || `${fallbackPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  };
-
-  const getFriendlyFirebaseMessage = (err: any) => {
-    const code = err?.code || '';
-    if (code === 'permission-denied') return '权限不足：请检查 Firestore 规则/登录状态。';
-    if (code === 'auth/unauthorized-domain') return '当前域名未加入 Firebase Auth 授权域名，请在 Firebase 控制台添加 Cloudflare 域名。';
-    if (code === 'invalid-argument') return '请求参数无效：请检查题库字段格式或图片 ID。';
-    return err?.message || String(err);
-  };
-
-  const reportFirestoreError = (err: unknown, operationType: OperationType, path: string) => {
-    try {
-      handleFirestoreError(err, operationType, path);
-    } catch {
-      // keep UI alive after logging
-    }
-  };
-
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      setCurrentUserEmail(user?.email || null);
-    });
-    return () => unsub();
-  }, []);
-
-  const handleGoogleLogin = async () => {
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (err: any) {
-      alert(`登录失败：${getFriendlyFirebaseMessage(err)}`);
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (err: any) {
-      alert(`退出失败：${getFriendlyFirebaseMessage(err)}`);
-    }
-  };
-
-  const toValidFirestoreId = (raw: string, fallbackPrefix = 'img') => {
-    const cleaned = raw
-      .trim()
-      .replace(/\.[a-z0-9]+$/i, '')
-      .replace(/[^a-zA-Z0-9_-]/g, '_')
-      .replace(/_+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .slice(0, 100);
-    return cleaned || `${fallbackPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  };
 
   useEffect(() => {
     if (!selectedVersionId) return;
@@ -112,13 +68,11 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       initialBoard[`${q.id}-body`] = imgs.map((img, i) => ({
         id: `${q.id}-body-img-${i}-${img}`,
         name: img,
-        displayName: img,
         url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
       }));
       initialBoard[`${q.id}-options`] = optImgs.map((img, i) => ({
         id: `${q.id}-opt-img-${i}-${img}`,
         name: img,
-        displayName: img,
         url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
       }));
       imgs.forEach(i => allKnownImages.add(i));
@@ -154,7 +108,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
 
     publicImgs.forEach(img => {
       if (!allKnownImages.has(img)) {
-        initialBoard.unassigned.push({ id: `public-${img}`, name: img, displayName: img, url: `/${img}` });
+        initialBoard.unassigned.push({ id: `public-${img}`, name: img, url: `/${img}` });
       }
     });
 
@@ -212,18 +166,27 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     setDragOverlay(false);
     
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const files = Array.from(e.dataTransfer.files as FileList).filter((f) => f.type.startsWith('image/'));
+      const droppedFiles = Array.from(e.dataTransfer.files) as File[];
+      const files = droppedFiles.filter((f) => f.type.startsWith('image/'));
       if (files.length === 0) return;
 
-      const newItems: Item[] = await Promise.all(files.map(f => {
+      const oversized = files.filter(file => file.size > MAX_FIRESTORE_IMAGE_BYTES);
+      if (oversized.length > 0) {
+        alert(`以下图片过大，无法保存到 Firebase，请压缩到 ${MAX_FIRESTORE_IMAGE_LABEL} 以内：\n${oversized.map(file => file.name).join('\n')}`);
+      }
+
+      const acceptedFiles = files.filter(file => file.size <= MAX_FIRESTORE_IMAGE_BYTES);
+      if (acceptedFiles.length === 0) return;
+
+      const newItems: Item[] = await Promise.all(acceptedFiles.map(f => {
         return new Promise<Item>((resolve) => {
           const reader = new FileReader();
           reader.onload = (e) => {
             const result = e.target?.result as string;
+            const docName = makeImageDocName(f);
             resolve({
-              id: `local-${Date.now()}-${Math.random()}`,
-              name: toValidFirestoreId(`${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${f.name}`),
-              displayName: f.name,
+              id: `local-${docName}`,
+              name: docName,
               url: result
             });
           };
@@ -292,6 +255,27 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     }
   };
 
+  const ensureAdminSignedIn = async () => {
+    if (password !== ADMIN_PASSWORD) {
+      alert(`没有操作权限`);
+      return false;
+    }
+
+    if (auth.currentUser) {
+      return true;
+    }
+
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+      return true;
+    } catch (err) {
+      alert('需要登录管理员 Google 账号后才能同步题库。');
+      console.error(err);
+      return false;
+    }
+  };
+
   const createVersion = async () => {
     const name = window.prompt("请输入新题库名称：");
     if (!name) return;
@@ -302,8 +286,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       questions: []
     };
     
-    if (password !== '5834') {
-      alert(`没有操作权限`);
+    if (!(await ensureAdminSignedIn())) {
       return;
     }
     
@@ -312,9 +295,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       setVersions([...versions, newVersion]);
       setSelectedVersionId(newId);
       alert('创建新题库成功！');
-    } catch(err: any) {
-      alert("创建失败: " + getFriendlyFirebaseMessage(err));
-      reportFirestoreError(err, OperationType.CREATE, 'quizVersions');
+    } catch(err) {
+      alert("创建失败: " + String(err));
+      handleFirestoreError(err, OperationType.CREATE, 'quizVersions');
     }
   };
 
@@ -324,6 +307,10 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       return;
     }
     if (window.confirm(`确定要删除题库 "${versionName}" 吗？此操作不可撤销将会同步删除云端数据和包含的图片！`)) {
+      if (!(await ensureAdminSignedIn())) {
+        return;
+      }
+
       try {
         const versionToDelete = versions.find(v => v.id === selectedVersionId);
         if (versionToDelete && versionToDelete.questions) {
@@ -335,7 +322,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           });
           
           if (imagesToDelete.size > 0) {
-            const deleteImagePromises = Array.from(imagesToDelete).filter(img => !img.startsWith('/') && !img.startsWith('data:')).map(img => deleteDoc(doc(db, 'images', img)).catch(e => console.error("Failed to delete image: ", e)));
+            const deleteImagePromises = Array.from(imagesToDelete)
+              .filter(img => !img.startsWith('/') && !img.startsWith('data:') && !PUBLIC_IMAGE_RE.test(img))
+              .map(img => deleteDoc(doc(db, 'images', img)).catch(e => console.error("Failed to delete image: ", e)));
             await Promise.all(deleteImagePromises);
           }
         }
@@ -347,9 +336,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           setSelectedVersionId(newVersions[0].id);
         }
         alert('删除成功！关联数据和图片已同步删除。');
-      } catch(err: any) {
-        alert("删除失败: " + getFriendlyFirebaseMessage(err));
-        reportFirestoreError(err, OperationType.DELETE, 'quizVersions');
+      } catch(err) {
+        alert("删除失败: " + String(err));
+        handleFirestoreError(err, OperationType.DELETE, 'quizVersions');
       }
     }
   };
@@ -401,192 +390,6 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     URL.revokeObjectURL(url);
   };
 
-  const parseTextToQuestions = (text: string): Question[] => {
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-    const parsed: Question[] = [];
-    let currentQ: Partial<Question> | null = null;
-    let currentOptions: string[] = [];
-    const globalAnswers: { qNum?: number, ans: number, isTf?: boolean }[] = [];
-    const seqAnswers: { ans: number, isTf?: boolean }[] = [];
-
-    // Prepass to consume all unified answers at the bottom of the list
-    for (let i = lines.length - 1; i >= 0; i--) {
-        const line = lines[i];
-        let isAnswerLine = false;
-
-        const rangeMatch = line.match(/^(\d+)[-~](\d+)[\.、:：\s]*([A-F对错√×\s]+)$/i);
-        if (rangeMatch) {
-            const s = parseInt(rangeMatch[1]);
-            const e = parseInt(rangeMatch[2]);
-            const ansStr = rangeMatch[3].replace(/\s+/g, '').toUpperCase();
-            if (e - s + 1 === ansStr.length) {
-                for(let j=0; j<ansStr.length; j++) {
-                    const aStr = ansStr[j];
-                    const isTf = aStr === '对' || aStr === '√' || aStr === '错' || aStr === '×';
-                    let aCode = (aStr === '对' || aStr === '√') ? 0 : ((aStr === '错' || aStr === '×') ? 1 : aStr.charCodeAt(0) - 65);
-                    globalAnswers.push({qNum: s+j, ans: aCode, isTf});
-                }
-                isAnswerLine = true;
-            }
-        }
-
-        if (!isAnswerLine && /^[\d\.、:：\sA-F对错√×]+$/i.test(line)) {
-            const inlineAnsRegex = /(\d+)[\.、:：\s]*([A-F对错√×])/gi;
-            const matches = Array.from(line.matchAll(inlineAnsRegex));
-            if (matches.length > 0) {
-                 matches.forEach(m => {
-                      const aStr = m[2].toUpperCase();
-                      const isTf = aStr === '对' || aStr === '√' || aStr === '错' || aStr === '×';
-                      let aCode = (aStr === '对' || aStr === '√') ? 0 : ((aStr === '错' || aStr === '×') ? 1 : aStr.charCodeAt(0) - 65);
-                      globalAnswers.push({qNum: parseInt(m[1]), ans: aCode, isTf});
-                 });
-                 isAnswerLine = true;
-            }
-        }
-
-        if (!isAnswerLine) {
-            const pureAnsMatch = line.match(/^(?:参考答案|答案|答案解析|参考答案及解析)?[：:\s]*([A-F对错√×\s]{2,})$/i);
-            if (pureAnsMatch) {
-                let str = pureAnsMatch[1].trim();
-                let ansList = [];
-                if (/\s/.test(str)) {
-                     ansList = str.split(/\s+/).filter(Boolean);
-                } else {
-                     ansList = str.split('');
-                }
-                
-                const currentLineAnswers = [];
-                for (let j = 0; j < ansList.length; j++) {
-                     const aStr = ansList[j].trim().toUpperCase();
-                     if (!aStr) continue;
-                     const isTf = aStr === '对' || aStr === '√' || aStr === '错' || aStr === '×';
-                     let aCode = (aStr === '对' || aStr === '√') ? 0 : ((aStr === '错' || aStr === '×') ? 1 : aStr.charCodeAt(0) - 65);
-                     currentLineAnswers.push({ans: aCode, isTf});
-                }
-                seqAnswers.unshift(...currentLineAnswers);
-                isAnswerLine = true;
-            }
-        }
-
-        if (!isAnswerLine && /^(?:参考答案|答案|答案解析|参考答案及解析)[：:\s]*$/.test(line)) {
-            isAnswerLine = true;
-        }
-
-        if (isAnswerLine) {
-            lines[i] = '';
-        }
-    }
-
-    const filteredLines = lines.filter(Boolean);
-    
-    for (let i = 0; i < filteredLines.length; i++) {
-        const line = filteredLines[i];
-
-        const qMatch = line.match(/^(\d+)[\.、]?\s+(.*)/) || line.match(/^(\d+)[\.、]\s*(.*)/);
-        if (qMatch) {
-            if (currentQ) {
-                if (currentOptions.length > 0) {
-                    currentQ.options = currentOptions;
-                } else if (currentQ.type === 'tf') {
-                    currentQ.options = ['正确', '错误'];
-                } else {
-                    currentQ.options = ['选项A', '选项B', '选项C', '选项D'];
-                }
-                parsed.push(currentQ as Question);
-            }
-            currentQ = {
-                id: 'q-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9) + '-' + i,
-                qNum: parseInt(qMatch[1]),
-                type: 'single',
-                text: qMatch[2],
-                options: [],
-                answer: 0,
-                score: 2,
-                images: [],
-                optionImages: []
-            } as any;
-            currentOptions = [];
-            continue;
-        }
-
-        if (!currentQ) continue;
-
-        const ansMatch = line.match(/^答案[：:\s]*([A-Z对错√×])/i);
-        if (ansMatch) {
-            const ansStr = ansMatch[1].toUpperCase();
-            if (ansStr === '对' || ansStr === '√') {
-                currentQ.type = 'tf';
-                currentQ.answer = 0;
-            } else if (ansStr === '错' || ansStr === '×') {
-                currentQ.type = 'tf';
-                currentQ.answer = 1;
-            } else {
-                currentQ.type = 'single';
-                currentQ.answer = ansStr.charCodeAt(0) - 65;
-            }
-            continue;
-        }
-
-        if (/^[A-F]([\.、:：]|\s+)/.test(line) && currentQ && currentOptions.length < 10) {
-            const parts = line.split(/(?:\s+)?(?=[A-F](?:[\.、:：]|\s+))/).map(s => s.trim()).filter(s => /^[A-F](?:[\.、:：]|\s+)?/.test(s));
-            if (parts.length > 0) {
-                parts.forEach(part => {
-                    const optMatch = part.match(/^[A-F](?:[\.、:：]|\s+)?\s*(.*)/);
-                    if (optMatch) currentOptions.push(optMatch[1].trim());
-                });
-                continue;
-            }
-        }
-
-        if (!line.startsWith('答案') && !line.startsWith('参考答案')) {
-            currentQ.text += '\n' + line;
-        }
-    }
-
-    if (currentQ) {
-        if (currentOptions.length > 0) {
-            currentQ.options = currentOptions;
-        } else if (currentQ.type === 'tf') {
-            currentQ.options = ['正确', '错误'];
-        } else {
-            currentQ.options = ['选项A', '选项B', '选项C', '选项D'];
-        }
-        parsed.push(currentQ as Question);
-    }
-    
-    parsed.forEach((q, idx) => {
-        let matchedAns;
-        // Try precise qNum mapping first
-        const pAns = globalAnswers.find(ga => ga.qNum === (q as any).qNum);
-        if (pAns) {
-            matchedAns = pAns;
-        } else if (seqAnswers.length > idx) {
-            matchedAns = seqAnswers[idx];
-        }
-
-        if (matchedAns) {
-             q.answer = matchedAns.ans;
-             if (matchedAns.isTf) {
-                 q.type = 'tf';
-                 q.options = ['正确', '错误'];
-             } else {
-                 // Convert TF back to single if global answer indicates it's single choice A/B/C/D
-                 if (q.type === 'tf') {
-                     q.type = 'single';
-                     q.options = ['选项A', '选项B', '选项C', '选项D']; 
-                 }
-             }
-        }
-        
-        if (q.answer === undefined || isNaN(q.answer) || q.answer < 0 || q.answer >= (q.options?.length || 1)) {
-            q.answer = 0;
-        }
-        delete (q as any).qNum;
-    });
-
-    return parsed;
-  };
-
   const handleTextImportSubmit = async () => {
     if (!importText.trim()) return;
     setImportLoading(true);
@@ -595,7 +398,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     await new Promise(r => setTimeout(r, 500));
     
     try {
-      const questions = parseTextToQuestions(importText);
+      const questions = parseQuestionText(importText);
       if (questions && questions.length > 0) {
         const shouldOverwrite = window.confirm(`成功提取出 ${questions.length} 道题目！\n\n点击“确定”清空当前题目并替换为您导入的题目；\n点击“取消”则将新题目追加到当前题库的末尾。`);
         
@@ -629,21 +432,20 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   };
 
   const saveDataAndFiles = async () => {
-    if (password !== '5834') {
-      alert(`没有操作权限`);
+    if (!(await ensureAdminSignedIn())) {
       return;
     }
 
     try {
       // 收集并上传新图片至 Firebase
       const uploads: Promise<void>[] = [];
-      const uploadedNameMap = new Map<string, string>();
-      Object.values(board).forEach((list: any) => {
+      (Object.values(board) as Item[][]).forEach((list) => {
         list.forEach(item => {
           if (item.url.startsWith('data:image/')) {
-            const safeName = toValidFirestoreId(item.name || item.displayName || 'img');
-            uploadedNameMap.set(item.name, safeName);
-            const docRef = doc(db, 'images', safeName);
+            if (dataUrlBytes(item.url) > MAX_FIRESTORE_IMAGE_BYTES) {
+              throw new Error(`图片 ${item.name} 超过 ${MAX_FIRESTORE_IMAGE_LABEL}，请压缩后再上传。`);
+            }
+            const docRef = doc(db, 'images', item.name); 
             uploads.push(setDoc(docRef, { content: item.url }));
           }
         });
@@ -661,8 +463,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         questions: localQuestions.map(q => {
           return {
             ...q,
-            images: (board[`${q.id}-body`] || []).map(i => uploadedNameMap.get(i.name) || i.name),
-            optionImages: (board[`${q.id}-options`] || []).map(i => uploadedNameMap.get(i.name) || i.name)
+            images: (board[`${q.id}-body`] || []).map(i => i.name),
+            optionImages: (board[`${q.id}-options`] || []).map(i => i.name)
           };
         })
       };
@@ -673,8 +475,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       onClose();
     } catch (err: any) {
       console.error(err);
-      reportFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
-      alert('保存出错: ' + getFriendlyFirebaseMessage(err));
+      handleFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
+      alert('保存出错: ' + err.message);
     }
   };
 
@@ -731,15 +533,6 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           </div>
         </div>
         <div className="flex items-center gap-3 px-4">
-          {currentUserEmail ? (
-            <button onClick={handleLogout} className="px-3 py-2 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded-xl text-xs hover:bg-emerald-100 transition-colors">
-              已登录：{currentUserEmail}（退出）
-            </button>
-          ) : (
-            <button onClick={handleGoogleLogin} className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-700 font-bold rounded-xl text-xs hover:bg-amber-100 transition-colors">
-              Google 登录
-            </button>
-          )}
           <button onClick={() => setTextImportModalOpen(true)} className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-bold rounded-xl flex items-center gap-2 hover:opacity-90 transition-opacity tooltip" title="粘贴文章/文本，自动解析为题目">
             <FileJson className="w-4 h-4"/> "文本导入"
           </button>
@@ -843,8 +636,7 @@ D. 深圳
                     className="grid grid-cols-2 gap-3 min-h-full"
                   >
                     {(board.unassigned || []).map((item, index) => (
-                      <React.Fragment key={item.id}>
-                      <Draggable draggableId={item.id} index={index}>
+                      <SafeDraggable key={item.id} draggableId={item.id} index={index}>
                         {(provided, snapshot) => (
                           <div
                             ref={provided.innerRef}
@@ -855,7 +647,7 @@ D. 深圳
                           >
                             <img src={item.url} alt="" className="max-w-full max-h-full object-contain p-2 pointer-events-none" />
                             <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-[10px] p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity">
-                              {item.displayName || item.name}
+                              {item.name}
                             </div>
                             <button
                               onClick={(e) => { e.stopPropagation(); removeItem('unassigned', index); }}
@@ -865,8 +657,7 @@ D. 深圳
                             </button>
                           </div>
                         )}
-                      </Draggable>
-                      </React.Fragment>
+                      </SafeDraggable>
                     ))}
                     {provided.placeholder}
                   </div>
@@ -991,8 +782,7 @@ D. 深圳
                                  className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
                                >
                                 {board[`${q.id}-body`]?.map((item, index) => (
-                                  <React.Fragment key={item.id}>
-                                  <Draggable draggableId={item.id} index={index}>
+                                  <SafeDraggable key={item.id} draggableId={item.id} index={index}>
                                     {(provided, snapshot) => (
                                       <div
                                         ref={provided.innerRef}
@@ -1010,8 +800,7 @@ D. 深圳
                                         </button>
                                       </div>
                                     )}
-                                  </Draggable>
-                                  </React.Fragment>
+                                  </SafeDraggable>
                                 ))}
                                 {provided.placeholder}
                               </div>
@@ -1038,8 +827,7 @@ D. 深圳
                                     className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
                                   >
                                   {board[`${q.id}-options`]?.map((item, index) => (
-                                    <React.Fragment key={item.id}>
-                                    <Draggable draggableId={item.id} index={index}>
+                                    <SafeDraggable key={item.id} draggableId={item.id} index={index}>
                                       {(provided, snapshot) => {
                                         const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
                                         const letter = letters[index] || (index+1);
@@ -1064,8 +852,7 @@ D. 深圳
                                           </div>
                                         );
                                       }}
-                                    </Draggable>
-                                    </React.Fragment>
+                                    </SafeDraggable>
                                   ))}
                                   {provided.placeholder}
                                   </div>

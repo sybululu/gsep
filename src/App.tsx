@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle2, RotateCcw, AlertCircle, Play, ChevronDown, Loader2 } from 'lucide-react';
+import { ChevronRight, ChevronLeft, CheckCircle2, RotateCcw, AlertCircle, Play, ChevronDown, Loader2 } from 'lucide-react';
 import { quizVersions as initialQuizVersions, QuizVersion, Question } from './data';
 import { QuestionImage } from './components/QuestionImage';
 
@@ -8,6 +8,9 @@ import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { handleFirestoreError, OperationType } from './utils/firestoreErrorHandler';
 
+const ADMIN_PASSWORD = '5834';
+const PUBLIC_IMAGE_RE = /^[\w-]+\.(png|jpe?g|gif|webp|svg)$/i;
+
 const OptionImage = ({ optImg }: { optImg: string }) => {
   const [srcPath, setSrcPath] = useState('');
   const [errorUrl, setErrorUrl] = useState(false);
@@ -15,6 +18,8 @@ const OptionImage = ({ optImg }: { optImg: string }) => {
   useEffect(() => {
     if (optImg.startsWith('/') || optImg.startsWith('data:')) {
       setSrcPath(optImg);
+    } else if (PUBLIC_IMAGE_RE.test(optImg)) {
+      setSrcPath(`/${optImg}`);
     } else {
       // Fetch from Firebase
       const fetchImage = async () => {
@@ -51,7 +56,7 @@ export default function App() {
   const [answers, setAnswers] = useState<Record<string, number>>({});
   
   const [versions, setVersions] = useState<QuizVersion[]>(initialQuizVersions);
-  const [currentVersionId, setCurrentVersionId] = useState(initialQuizVersions[0]?.id ?? '');
+  const [currentVersionId, setCurrentVersionId] = useState(initialQuizVersions[0].id);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -90,8 +95,8 @@ export default function App() {
   const handleOpenImageMatcher = async () => {
     const pwd = window.prompt("请输入管理员密码：");
     if (!pwd) return;
-    if (pwd === '5834') {
-      setAdminPassword('5834');
+    if (pwd === ADMIN_PASSWORD) {
+      setAdminPassword(ADMIN_PASSWORD);
       setShowImageMatcher(true);
     } else {
       alert("密码错误！");
@@ -143,8 +148,6 @@ export default function App() {
   };
 
   const totalScore = questions.reduce((sum, q) => sum + q.score, 0);
-  const calculatedScore = calculateScore();
-  const scorePercent = totalScore > 0 ? (calculatedScore / totalScore) * 100 : 0;
 
   if (loading) {
     return (
@@ -230,7 +233,7 @@ export default function App() {
                 <div className="w-full shrink-0 h-4 bg-white border-2 border-black rounded-full overflow-hidden mb-6">
                   <div 
                     className="h-full bg-[#EC4899] border-r-2 border-black transition-all duration-300"
-                    style={{ width: `${((currentQuestionIndex + 1) / totalQuestions) * 100}%` }}
+                    style={{ width: `${((currentQuestionIndex) / totalQuestions) * 100}%` }}
                   ></div>
                 </div>
 
@@ -327,12 +330,12 @@ export default function App() {
               <span className="text-sm font-black uppercase tracking-widest mb-2 px-4 py-1 bg-white border-2 border-black rounded-full">最终得分</span>
               
               <div className="flex justify-center flex-col items-center gap-2 mt-4 mb-2">
-                <span className="text-8xl font-black text-black leading-none tracking-tighter">{calculatedScore}</span>
+                <span className="text-8xl font-black text-black leading-none tracking-tighter">{calculateScore()}</span>
                 <span className="text-xl font-bold text-zinc-600">out of {totalScore}</span>
               </div>
               
               <div className="w-full max-w-sm bg-white/50 h-3 rounded-full mt-4 border-2 border-black overflow-hidden">
-                <div className="bg-black h-full rounded-full" style={{ width: `${scorePercent}%` }}></div>
+                <div className="bg-black h-full rounded-full" style={{ width: `${(calculateScore() / totalScore) * 100}%` }}></div>
               </div>
 
               <button
@@ -421,3 +424,4 @@ export default function App() {
     </div>
   );
 }
+

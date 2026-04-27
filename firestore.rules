@@ -47,13 +47,13 @@ service cloud.firestore {
     }
 
     match /quizVersions/{versionId} {
-      // Anyone can read and write quizzes
+      // The quiz app is public-read, but writes must come from the admin account.
       allow get, list: if true;
-      allow create: if isValidId(versionId) && isValidQuizVersion(incoming());
-      allow update: if isValidId(versionId) && isValidQuizVersion(incoming()) && (
+      allow create: if isAdmin() && isValidId(versionId) && isValidQuizVersion(incoming());
+      allow update: if isAdmin() && isValidId(versionId) && isValidQuizVersion(incoming()) && (
         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'questions'])
       );
-      allow delete: if isValidId(versionId);
+      allow delete: if isAdmin() && isValidId(versionId);
     }
 
     function isValidImage(data) {
@@ -63,13 +63,13 @@ service cloud.firestore {
     }
 
     match /images/{imageId} {
-      // Anyone can read and write images
+      // The quiz app is public-read, but writes must come from the admin account.
       allow get, list: if true;
-      allow create: if isValidId(imageId) && isValidImage(incoming());
-      allow update: if isValidId(imageId) && isValidImage(incoming()) && (
+      allow create: if isAdmin() && isValidId(imageId) && isValidImage(incoming());
+      allow update: if isAdmin() && isValidId(imageId) && isValidImage(incoming()) && (
         incoming().diff(existing()).affectedKeys().hasOnly(['content'])
       );
-      allow delete: if isValidId(imageId);
+      allow delete: if isAdmin() && isValidId(imageId);
     }
   }
 }

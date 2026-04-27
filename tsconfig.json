@@ -28,10 +28,11 @@
     "vite.config.ts"
   ],
   "exclude": [
-    "dist",
     "node_modules",
-    "*.js",
-    "*.cjs",
-    "app"
+    "dist",
+    "fix.js",
+    "replaceParser.cjs",
+    "testAnswers*.js",
+    "testAnswers*.cjs"
   ]
 }

@@ -3,6 +3,8 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 
+const PUBLIC_IMAGE_RE = /^[\w-]+\.(png|jpe?g|gif|webp|svg)$/i;
+
 export const QuestionImage = ({ id, fallbackText, images }: { id: string; fallbackText?: string, images?: string[] }) => {
   const [errorUrls, setErrorUrls] = useState<Record<string, boolean>>({});
   const [firebaseImages, setFirebaseImages] = useState<Record<string, string>>({});
@@ -12,7 +14,7 @@ export const QuestionImage = ({ id, fallbackText, images }: { id: string; fallba
     
     images.forEach(async (img) => {
       // If NOT a local path and we haven't fetched it
-      if (!img.startsWith('/') && !img.startsWith('data:') && !firebaseImages[img] && !errorUrls[img]) {
+      if (!img.startsWith('/') && !img.startsWith('data:') && !PUBLIC_IMAGE_RE.test(img) && !firebaseImages[img] && !errorUrls[img]) {
         try {
           const docRef = doc(db, 'images', img);
           const docSnap = await getDoc(docRef);
@@ -35,6 +37,8 @@ export const QuestionImage = ({ id, fallbackText, images }: { id: string; fallba
             srcPath = img;
           } else if (img.startsWith('data:')) {
             srcPath = img;
+          } else if (PUBLIC_IMAGE_RE.test(img)) {
+            srcPath = `/${img}`;
           } else if (firebaseImages[img]) {
             srcPath = firebaseImages[img];
           } else {
@@ -45,7 +49,7 @@ export const QuestionImage = ({ id, fallbackText, images }: { id: string; fallba
 
           return (
             <div key={idx} className="relative flex-1 bg-zinc-50 border-4 border-dashed border-zinc-200 rounded-2xl flex items-center justify-center overflow-hidden p-2 min-h-[4rem]">
-              {!firebaseImages[img] && !img.startsWith('/') && !img.startsWith('data:') && (
+              {!firebaseImages[img] && !PUBLIC_IMAGE_RE.test(img) && !img.startsWith('/') && !img.startsWith('data:') && (
                  <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-400">Loading...</div>
               )}
               <img
