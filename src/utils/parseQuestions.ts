@@ -93,12 +93,13 @@ export const parseTextToQuestions = (text: string): Question[] => {
     const qMatch = line.match(/^[\(（\[【]?(\d+)[\)）\]】]?[\.、:：]\s*(.*)/);
     if (qMatch) {
       if (currentQ) {
-        if (currentOptions.length > 0) {
+        if (currentOptions.length > 0 && currentOptions.some(opt => opt.trim())) {
+          // 有有效文字选项，使用解析到的选项
           currentQ.options = currentOptions;
         } else if (currentQ.type === 'tf') {
           currentQ.options = ['正确', '错误'];
         } else {
-          // 选择题预留4个空白选项（用于图片选项）
+          // 选项为空或无文字，预留 A/B/C/D 空白选项（用于图片选项）
           currentQ.options = ['A', 'B', 'C', 'D'];
         }
         parsed.push(currentQ as Question);
@@ -137,12 +138,13 @@ export const parseTextToQuestions = (text: string): Question[] => {
   }
 
   if (currentQ) {
-    if (currentOptions.length > 0) {
+    if (currentOptions.length > 0 && currentOptions.some(opt => opt.trim())) {
+      // 有有效文字选项，使用解析到的选项
       currentQ.options = currentOptions;
     } else if (currentQ.type === 'tf') {
       currentQ.options = ['正确', '错误'];
     } else {
-      // 选择题预留4个空白选项（用于图片选项）
+      // 选项为空或无文字，预留 A/B/C/D 空白选项（用于图片选项）
       currentQ.options = ['A', 'B', 'C', 'D'];
     }
     parsed.push(currentQ as Question);
