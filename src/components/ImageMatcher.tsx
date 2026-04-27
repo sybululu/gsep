@@ -2,7 +2,7 @@ import React, { useState, useEffect, DragEvent, ReactNode } from 'react';
 import { QuizVersion, Question } from '../data';
 import { Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Loader2 } from 'lucide-react';
 import { collection, doc, setDoc, deleteDoc, getDocs } from 'firebase/firestore';
-import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 import { parseTextToQuestions as parseQuestionText } from '../utils/parseQuestions';
@@ -107,8 +107,23 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [dragOverZone, setDragOverZone] = useState<string | null>(null);
   const [editorKey, setEditorKey] = useState(0);
   const [visibleQuestionCount, setVisibleQuestionCount] = useState(INITIAL_VISIBLE_QUESTIONS);
+  const [googleUser, setGoogleUser] = useState<{ name: string; email: string; photo?: string } | null>(null);
 
+  // 监听 Google 登录状态
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setGoogleUser({
+          name: user.displayName || '用户',
+          email: user.email || '',
+          photo: user.photoURL || undefined
+        });
+      } else {
+        setGoogleUser(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
     if (!selectedVersionId) return;
     const currentVersion = versions.find(v => v.id === selectedVersionId);
     if (!currentVersion) return;
@@ -625,9 +640,24 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       {/* Header */}
       <div className="shrink-0 bg-white p-4 border-b-2 border-slate-200 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-3 px-4">
-          <button onClick={handleCloudLogin} className="px-3 py-2 bg-emerald-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-emerald-700 transition-colors tooltip" title="Firebase Google login for cloud database write permission">
-            登录云数据库
-          </button>
+          {googleUser ? (
+            <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-xl">
+              {googleUser.photo && (
+                <img src={googleUser.photo} alt="" className="w-6 h-6 rounded-full" />
+              )}
+              <span className="text-sm text-green-700 font-medium">{googleUser.name}</span>
+              <button 
+                onClick={async () => { await signOut(auth); }}
+                className="ml-2 px-2 py-1 bg-red-100 text-red-600 text-xs rounded hover:bg-red-200"
+              >
+                退出
+              </button>
+            </div>
+          ) : (
+            <button onClick={handleCloudLogin} className="px-3 py-2 bg-emerald-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-emerald-700 transition-colors tooltip" title="Firebase Google login for cloud database write permission">
+              登录云数据库
+            </button>
+          )}
           <Edit3 className="w-8 h-8 text-[#FFD600]" />
           <div>
             <h1 className="text-xl font-bold font-sans">题库管理面板</h1>
