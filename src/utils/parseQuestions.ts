@@ -226,7 +226,11 @@ const parseLinesToQuestions = (lines: string[]): Question[] => {
     const line = normalizeLine(rawLine);
     if (!line) continue;
 
-    if (ANSWER_HEADER_RE.test(line) && !INLINE_ANSWER_RE.test(line)) break;
+    // 只有当答案是纯标题行（没有后续内容）时才 break
+    if (ANSWER_HEADER_RE.test(line) && line.replace(ANSWER_HEADER_RE, '').trim() === '') {
+      pushCurrent(); // 先保存当前题目
+      break;
+    }
 
     const nextSection = classifySection(line);
     if (nextSection) {
@@ -289,17 +293,23 @@ const parseLinesToQuestions = (lines: string[]): Question[] => {
 };
 
 const stitchFragmentedWordText = (lines: string[]) => {
-  const compact = lines
-    .map(normalizeLine)
-    .filter(Boolean)
-    .join('\n')
-    .replace(/([A-Fa-f])\s*[.．、:：)]\s*/g, '\n$1、')
-    .replace(/(?:^|\n)\s*(?:[（(]?\s*)?(\d{1,3})(?:\s*[）)]|[.．、])\s*/g, '\n$1、')
-    .split(/\n+/)
-    .map(normalizeLine)
-    .filter(Boolean);
-
-  return compact;
+  const result: string[] = [];
+  
+  for (const line of lines) {
+    const normalized = normalizeLine(line);
+    if (!normalized) continue;
+    
+    // 检查是否是选项行（A. xxx B. xxx 格式，同一行有多个选项）
+    const optionParts = normalized.split(/\s+(?=[A-Fa-f][.．、:：)])/);
+    if (optionParts.length > 1) {
+      // 每个选项单独一行
+      result.push(...optionParts);
+    } else {
+      result.push(normalized);
+    }
+  }
+  
+  return result;
 };
 
 export const parseTextToQuestions = (text: string): Question[] => {
