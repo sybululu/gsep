@@ -124,6 +124,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
     if (!selectedVersionId) return;
     const currentVersion = versions.find(v => v.id === selectedVersionId);
     if (!currentVersion) return;
