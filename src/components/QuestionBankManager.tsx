@@ -26,6 +26,8 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
   const [textOpen, setTextOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importing, setImporting] = useState(false);
+  const [importSingleScore, setImportSingleScore] = useState('2');
+  const [importTfScore, setImportTfScore] = useState('4');
   const [uploadHover, setUploadHover] = useState(false);
   const [hoverZone, setHoverZone] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -214,7 +216,15 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     try {
       const parsed = normalizeQuizQuestions(parseTextToQuestions(importText));
       if (!parsed.length) return alert('未识别到选择题或判断题。');
-      const overwrite = confirm(`识别到 ${parsed.length} 道选择/判断题。确定替换当前题库，取消追加。`);
+      
+      // 用用户设置的分值覆盖解析出来的分值
+      const singleScore = parseInt(importSingleScore) || 2;
+      const tfScore = parseInt(importTfScore) || 4;
+      parsed.forEach(q => {
+        q.score = q.type === 'tf' ? tfScore : singleScore;
+      });
+      
+      const overwrite = confirm(`识别到 ${parsed.length} 道选择/判断题（单选每题${singleScore}分，判断每题${tfScore}分）。确定替换当前题库，取消追加。`);
       setQuestions(prev => overwrite ? parsed : [...prev, ...parsed]);
       setVisibleCount(Math.min(PAGE_SIZE, overwrite ? parsed.length : questions.length + parsed.length));
       setTextOpen(false);
@@ -260,9 +270,34 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-3xl rounded-3xl bg-white p-5">
             <h2 className="text-xl font-bold">导入选择/判断题</h2>
-            <textarea value={importText} onChange={event => setImportText(event.target.value)} className="mt-3 h-[45vh] w-full rounded-xl border p-3" />
-            <div className="mt-3 flex justify-end gap-2">
-              <button onClick={() => setTextOpen(false)}>取消</button>
+            <textarea value={importText} onChange={event => setImportText(event.target.value)} className="mt-3 h-[40vh] w-full rounded-xl border p-3" />
+            <div className="mt-3 flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <label className="text-sm">单选题每题</label>
+                <input
+                  type="number"
+                  value={importSingleScore}
+                  onChange={e => setImportSingleScore(e.target.value)}
+                  className="w-16 rounded border px-2 py-1 text-center"
+                  min="1"
+                  max="100"
+                />
+                <label className="text-sm">分</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm">判断题每题</label>
+                <input
+                  type="number"
+                  value={importTfScore}
+                  onChange={e => setImportTfScore(e.target.value)}
+                  className="w-16 rounded border px-2 py-1 text-center"
+                  min="1"
+                  max="100"
+                />
+                <label className="text-sm">分</label>
+              </div>
+              <div className="flex-1"></div>
+              <button onClick={() => { setTextOpen(false); setImportText(''); }}>取消</button>
               <button onClick={importTextQuestions} disabled={!importText.trim() || importing} className="rounded-xl bg-purple-600 px-4 py-2 text-white">
                 {importing ? <Loader2 className="animate-spin" /> : '解析'}
               </button>
