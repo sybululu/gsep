@@ -3,13 +3,14 @@ import { QuizVersion, Question, QuestionType } from '../data';
 import { Image as ImageIcon, Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Settings, Wand2, Loader2 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { doc, setDoc, deleteDoc } from 'firebase/firestore';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 
 interface Item {
   id: string; // The image url or local base64
-  name: string; // display name
+  name: string; // firestore image document id
+  displayName?: string; // ui display name
   url: string; // src
 }
 
@@ -30,6 +31,58 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [textImportModalOpen, setTextImportModalOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importLoading, setImportLoading] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(auth.currentUser?.email || null);
+
+  const toValidFirestoreId = (raw: string, fallbackPrefix = 'img') => {
+    const cleaned = raw
+      .trim()
+      .replace(/\.[a-z0-9]+$/i, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 100);
+    return cleaned || `${fallbackPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  };
+
+  const getFriendlyFirebaseMessage = (err: any) => {
+    const code = err?.code || '';
+    if (code === 'permission-denied') return '权限不足：请检查 Firestore 规则/登录状态。';
+    if (code === 'auth/unauthorized-domain') return '当前域名未加入 Firebase Auth 授权域名，请在 Firebase 控制台添加 Cloudflare 域名。';
+    if (code === 'invalid-argument') return '请求参数无效：请检查题库字段格式或图片 ID。';
+    return err?.message || String(err);
+  };
+
+  const reportFirestoreError = (err: unknown, operationType: OperationType, path: string) => {
+    try {
+      handleFirestoreError(err, operationType, path);
+    } catch {
+      // keep UI alive after logging
+    }
+  };
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setCurrentUserEmail(user?.email || null);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleGoogleLogin = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err: any) {
+      alert(`登录失败：${getFriendlyFirebaseMessage(err)}`);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err: any) {
+      alert(`退出失败：${getFriendlyFirebaseMessage(err)}`);
+    }
+  };
 
   useEffect(() => {
     if (!selectedVersionId) return;
@@ -48,11 +101,13 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       initialBoard[`${q.id}-body`] = imgs.map((img, i) => ({
         id: `${q.id}-body-img-${i}-${img}`,
         name: img,
+        displayName: img,
         url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
       }));
       initialBoard[`${q.id}-options`] = optImgs.map((img, i) => ({
         id: `${q.id}-opt-img-${i}-${img}`,
         name: img,
+        displayName: img,
         url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
       }));
       imgs.forEach(i => allKnownImages.add(i));
@@ -88,7 +143,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
 
     publicImgs.forEach(img => {
       if (!allKnownImages.has(img)) {
-        initialBoard.unassigned.push({ id: `public-${img}`, name: img, url: `/${img}` });
+        initialBoard.unassigned.push({ id: `public-${img}`, name: img, displayName: img, url: `/${img}` });
       }
     });
 
@@ -146,7 +201,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     setDragOverlay(false);
     
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const files = Array.from(e.dataTransfer.files).filter((f: any) => f.type.startsWith('image/'));
+      const files = Array.from(e.dataTransfer.files as FileList).filter((f) => f.type.startsWith('image/'));
       if (files.length === 0) return;
 
       const newItems: Item[] = await Promise.all(files.map(f => {
@@ -156,7 +211,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
             const result = e.target?.result as string;
             resolve({
               id: `local-${Date.now()}-${Math.random()}`,
-              name: f.name,
+              name: toValidFirestoreId(`${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${f.name}`),
+              displayName: f.name,
               url: result
             });
           };
@@ -245,9 +301,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       setVersions([...versions, newVersion]);
       setSelectedVersionId(newId);
       alert('创建新题库成功！');
-    } catch(err) {
-      alert("创建失败: " + String(err));
-      handleFirestoreError(err, OperationType.CREATE, 'quizVersions');
+    } catch(err: any) {
+      alert("创建失败: " + getFriendlyFirebaseMessage(err));
+      reportFirestoreError(err, OperationType.CREATE, 'quizVersions');
     }
   };
 
@@ -280,9 +336,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           setSelectedVersionId(newVersions[0].id);
         }
         alert('删除成功！关联数据和图片已同步删除。');
-      } catch(err) {
-        alert("删除失败: " + String(err));
-        handleFirestoreError(err, OperationType.DELETE, 'quizVersions');
+      } catch(err: any) {
+        alert("删除失败: " + getFriendlyFirebaseMessage(err));
+        reportFirestoreError(err, OperationType.DELETE, 'quizVersions');
       }
     }
   };
@@ -570,10 +626,13 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     try {
       // 收集并上传新图片至 Firebase
       const uploads: Promise<void>[] = [];
+      const uploadedNameMap = new Map<string, string>();
       Object.values(board).forEach((list: any) => {
         list.forEach(item => {
           if (item.url.startsWith('data:image/')) {
-            const docRef = doc(db, 'images', item.name); 
+            const safeName = toValidFirestoreId(item.name || item.displayName || 'img');
+            uploadedNameMap.set(item.name, safeName);
+            const docRef = doc(db, 'images', safeName);
             uploads.push(setDoc(docRef, { content: item.url }));
           }
         });
@@ -591,8 +650,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         questions: localQuestions.map(q => {
           return {
             ...q,
-            images: (board[`${q.id}-body`] || []).map(i => i.name),
-            optionImages: (board[`${q.id}-options`] || []).map(i => i.name)
+            images: (board[`${q.id}-body`] || []).map(i => uploadedNameMap.get(i.name) || i.name),
+            optionImages: (board[`${q.id}-options`] || []).map(i => uploadedNameMap.get(i.name) || i.name)
           };
         })
       };
@@ -603,8 +662,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       onClose();
     } catch (err: any) {
       console.error(err);
-      handleFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
-      alert('保存出错: ' + err.message);
+      reportFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
+      alert('保存出错: ' + getFriendlyFirebaseMessage(err));
     }
   };
 
@@ -661,6 +720,15 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           </div>
         </div>
         <div className="flex items-center gap-3 px-4">
+          {currentUserEmail ? (
+            <button onClick={handleLogout} className="px-3 py-2 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded-xl text-xs hover:bg-emerald-100 transition-colors">
+              已登录：{currentUserEmail}（退出）
+            </button>
+          ) : (
+            <button onClick={handleGoogleLogin} className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-700 font-bold rounded-xl text-xs hover:bg-amber-100 transition-colors">
+              Google 登录
+            </button>
+          )}
           <button onClick={() => setTextImportModalOpen(true)} className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-bold rounded-xl flex items-center gap-2 hover:opacity-90 transition-opacity tooltip" title="粘贴文章/文本，自动解析为题目">
             <FileJson className="w-4 h-4"/> "文本导入"
           </button>
@@ -764,7 +832,8 @@ D. 深圳
                     className="grid grid-cols-2 gap-3 min-h-full"
                   >
                     {(board.unassigned || []).map((item, index) => (
-                      <Draggable key={item.id} draggableId={item.id} index={index}>
+                      <React.Fragment key={item.id}>
+                      <Draggable draggableId={item.id} index={index}>
                         {(provided, snapshot) => (
                           <div
                             ref={provided.innerRef}
@@ -775,7 +844,7 @@ D. 深圳
                           >
                             <img src={item.url} alt="" className="max-w-full max-h-full object-contain p-2 pointer-events-none" />
                             <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-[10px] p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity">
-                              {item.name}
+                              {item.displayName || item.name}
                             </div>
                             <button
                               onClick={(e) => { e.stopPropagation(); removeItem('unassigned', index); }}
@@ -786,6 +855,7 @@ D. 深圳
                           </div>
                         )}
                       </Draggable>
+                      </React.Fragment>
                     ))}
                     {provided.placeholder}
                   </div>
@@ -910,7 +980,8 @@ D. 深圳
                                  className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
                                >
                                 {board[`${q.id}-body`]?.map((item, index) => (
-                                  <Draggable key={item.id} draggableId={item.id} index={index}>
+                                  <React.Fragment key={item.id}>
+                                  <Draggable draggableId={item.id} index={index}>
                                     {(provided, snapshot) => (
                                       <div
                                         ref={provided.innerRef}
@@ -929,6 +1000,7 @@ D. 深圳
                                       </div>
                                     )}
                                   </Draggable>
+                                  </React.Fragment>
                                 ))}
                                 {provided.placeholder}
                               </div>
@@ -955,7 +1027,8 @@ D. 深圳
                                     className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
                                   >
                                   {board[`${q.id}-options`]?.map((item, index) => (
-                                    <Draggable key={item.id} draggableId={item.id} index={index}>
+                                    <React.Fragment key={item.id}>
+                                    <Draggable draggableId={item.id} index={index}>
                                       {(provided, snapshot) => {
                                         const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
                                         const letter = letters[index] || (index+1);
@@ -981,6 +1054,7 @@ D. 深圳
                                         );
                                       }}
                                     </Draggable>
+                                    </React.Fragment>
                                   ))}
                                   {provided.placeholder}
                                   </div>
