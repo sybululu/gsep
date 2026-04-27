@@ -9,7 +9,8 @@ import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHand
 
 interface Item {
   id: string; // The image url or local base64
-  name: string; // display name
+  name: string; // firestore image document id
+  displayName?: string; // ui display name
   url: string; // src
 }
 
@@ -31,6 +32,17 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [importText, setImportText] = useState('');
   const [importLoading, setImportLoading] = useState(false);
 
+  const toValidFirestoreId = (raw: string, fallbackPrefix = 'img') => {
+    const cleaned = raw
+      .trim()
+      .replace(/\.[a-z0-9]+$/i, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 100);
+    return cleaned || `${fallbackPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  };
+
   useEffect(() => {
     if (!selectedVersionId) return;
     const currentVersion = versions.find(v => v.id === selectedVersionId);
@@ -48,11 +60,13 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       initialBoard[`${q.id}-body`] = imgs.map((img, i) => ({
         id: `${q.id}-body-img-${i}-${img}`,
         name: img,
+        displayName: img,
         url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
       }));
       initialBoard[`${q.id}-options`] = optImgs.map((img, i) => ({
         id: `${q.id}-opt-img-${i}-${img}`,
         name: img,
+        displayName: img,
         url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
       }));
       imgs.forEach(i => allKnownImages.add(i));
@@ -88,7 +102,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
 
     publicImgs.forEach(img => {
       if (!allKnownImages.has(img)) {
-        initialBoard.unassigned.push({ id: `public-${img}`, name: img, url: `/${img}` });
+        initialBoard.unassigned.push({ id: `public-${img}`, name: img, displayName: img, url: `/${img}` });
       }
     });
 
@@ -146,7 +160,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     setDragOverlay(false);
     
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const files = Array.from(e.dataTransfer.files).filter((f: any) => f.type.startsWith('image/'));
+      const files = Array.from(e.dataTransfer.files as FileList).filter((f) => f.type.startsWith('image/'));
       if (files.length === 0) return;
 
       const newItems: Item[] = await Promise.all(files.map(f => {
@@ -156,7 +170,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
             const result = e.target?.result as string;
             resolve({
               id: `local-${Date.now()}-${Math.random()}`,
-              name: f.name,
+              name: toValidFirestoreId(`${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${f.name}`),
+              displayName: f.name,
               url: result
             });
           };
@@ -570,10 +585,13 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     try {
       // 收集并上传新图片至 Firebase
       const uploads: Promise<void>[] = [];
+      const uploadedNameMap = new Map<string, string>();
       Object.values(board).forEach((list: any) => {
         list.forEach(item => {
           if (item.url.startsWith('data:image/')) {
-            const docRef = doc(db, 'images', item.name); 
+            const safeName = toValidFirestoreId(item.name || item.displayName || 'img');
+            uploadedNameMap.set(item.name, safeName);
+            const docRef = doc(db, 'images', safeName);
             uploads.push(setDoc(docRef, { content: item.url }));
           }
         });
@@ -591,8 +609,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         questions: localQuestions.map(q => {
           return {
             ...q,
-            images: (board[`${q.id}-body`] || []).map(i => i.name),
-            optionImages: (board[`${q.id}-options`] || []).map(i => i.name)
+            images: (board[`${q.id}-body`] || []).map(i => uploadedNameMap.get(i.name) || i.name),
+            optionImages: (board[`${q.id}-options`] || []).map(i => uploadedNameMap.get(i.name) || i.name)
           };
         })
       };
@@ -764,7 +782,8 @@ D. 深圳
                     className="grid grid-cols-2 gap-3 min-h-full"
                   >
                     {(board.unassigned || []).map((item, index) => (
-                      <Draggable key={item.id} draggableId={item.id} index={index}>
+                      <React.Fragment key={item.id}>
+                      <Draggable draggableId={item.id} index={index}>
                         {(provided, snapshot) => (
                           <div
                             ref={provided.innerRef}
@@ -775,7 +794,7 @@ D. 深圳
                           >
                             <img src={item.url} alt="" className="max-w-full max-h-full object-contain p-2 pointer-events-none" />
                             <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-[10px] p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity">
-                              {item.name}
+                              {item.displayName || item.name}
                             </div>
                             <button
                               onClick={(e) => { e.stopPropagation(); removeItem('unassigned', index); }}
@@ -786,6 +805,7 @@ D. 深圳
                           </div>
                         )}
                       </Draggable>
+                      </React.Fragment>
                     ))}
                     {provided.placeholder}
                   </div>
@@ -910,7 +930,8 @@ D. 深圳
                                  className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
                                >
                                 {board[`${q.id}-body`]?.map((item, index) => (
-                                  <Draggable key={item.id} draggableId={item.id} index={index}>
+                                  <React.Fragment key={item.id}>
+                                  <Draggable draggableId={item.id} index={index}>
                                     {(provided, snapshot) => (
                                       <div
                                         ref={provided.innerRef}
@@ -929,6 +950,7 @@ D. 深圳
                                       </div>
                                     )}
                                   </Draggable>
+                                  </React.Fragment>
                                 ))}
                                 {provided.placeholder}
                               </div>
@@ -955,7 +977,8 @@ D. 深圳
                                     className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
                                   >
                                   {board[`${q.id}-options`]?.map((item, index) => (
-                                    <Draggable key={item.id} draggableId={item.id} index={index}>
+                                    <React.Fragment key={item.id}>
+                                    <Draggable draggableId={item.id} index={index}>
                                       {(provided, snapshot) => {
                                         const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
                                         const letter = letters[index] || (index+1);
@@ -981,6 +1004,7 @@ D. 深圳
                                         );
                                       }}
                                     </Draggable>
+                                    </React.Fragment>
                                   ))}
                                   {provided.placeholder}
                                   </div>
