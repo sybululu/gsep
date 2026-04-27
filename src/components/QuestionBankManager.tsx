@@ -105,7 +105,8 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     event.preventDefault();
     event.stopPropagation();
     setUploadHover(false);
-    setLibraryImages(prev => [...prev, ...(await imageFilesToLibraryItems(Array.from(event.dataTransfer.files)))]);
+    const newItems = await imageFilesToLibraryItems(Array.from(event.dataTransfer.files));
+    setLibraryImages(prev => [...prev, ...newItems]);
   };
 
   const onImageDrop = (event: DragEvent<HTMLElement>, questionId: string, target: ImageTarget) => {
