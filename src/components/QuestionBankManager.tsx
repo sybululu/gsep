@@ -67,8 +67,11 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
       if (isCloudImageId(image)) ids.add(image);
     }));
 
-    ids.forEach(async image => {
-      if (cloudImages[image]) return;
+    // 只加载尚未加载的图片
+    const newIds = Array.from(ids).filter(id => !cloudImages[id]);
+    if (newIds.length === 0) return;
+
+    newIds.forEach(async image => {
       try {
         const snap = await getDoc(doc(db, 'images', selectedId, 'images', image));
         const content = snap.exists() ? snap.data().content : '';
@@ -77,7 +80,7 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
         console.warn('Failed to load cloud image', image, error);
       }
     });
-  }, [questions, cloudImages, selectedId]);
+  }, [questions, selectedId]); // 移除 cloudImages 依赖，避免无限循环
 
   const updateQuestion = (index: number, patch: Partial<Question>) => {
     setQuestions(prev => normalizeQuizQuestions(prev.map((question, i) => i === index ? { ...question, ...patch } : question)));
