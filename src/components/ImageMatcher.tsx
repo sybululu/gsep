@@ -656,7 +656,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
               </button>
             </div>
           ) : (
-            <button onClick={handleCloudLogin} className="px-3 py-2 bg-emerald-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-emerald-700 transition-colors tooltip" title="Firebase Google login for cloud database write permission">
+            <button onClick={handleCloudLogin} className="px-3 py-2 bg-emerald-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-emerald-700 transition-colors z-50 relative">
               登录云数据库
             </button>
           )}
