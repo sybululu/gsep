@@ -1,6 +1,6 @@
 import { useEffect, useState, type DragEvent } from 'react';
 import { ChevronDown, Download, FileJson, Loader2, Plus, Upload, X } from 'lucide-react';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
 import type { Question, QuizVersion } from '../data';
 import { db } from '../firebase';
 import { parseTextToQuestions } from '../utils/parseQuestions';
@@ -39,6 +39,26 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     setName(selected.name);
     setQuestions(nextQuestions);
     setVisibleCount(Math.min(PAGE_SIZE, nextQuestions.length || PAGE_SIZE));
+    setCloudImages({});
+    
+    // 加载对应题库的云端图片
+    const loadLibraryImages = async () => {
+      try {
+        const imagesRef = collection(db, 'images', selectedId, 'images');
+        const snap = await getDocs(imagesRef);
+        const loaded: LibraryImage[] = [];
+        snap.forEach(d => {
+          const data = d.data();
+          if (typeof data.content === 'string') {
+            loaded.push({ id: d.id, name: d.id, content: data.content });
+          }
+        });
+        setLibraryImages(loaded);
+      } catch (error) {
+        console.warn('Failed to load library images', error);
+      }
+    };
+    loadLibraryImages();
   }, [selectedId, versions]);
 
   useEffect(() => {
@@ -50,14 +70,14 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     ids.forEach(async image => {
       if (cloudImages[image]) return;
       try {
-        const snap = await getDoc(doc(db, 'images', image));
+        const snap = await getDoc(doc(db, 'images', selectedId, 'images', image));
         const content = snap.exists() ? snap.data().content : '';
         if (typeof content === 'string') setCloudImages(prev => ({ ...prev, [image]: content }));
       } catch (error) {
         console.warn('Failed to load cloud image', image, error);
       }
     });
-  }, [questions, cloudImages]);
+  }, [questions, cloudImages, selectedId]);
 
   const updateQuestion = (index: number, patch: Partial<Question>) => {
     setQuestions(prev => normalizeQuizQuestions(prev.map((question, i) => i === index ? { ...question, ...patch } : question)));

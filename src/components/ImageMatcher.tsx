@@ -460,7 +460,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           if (imagesToDelete.size > 0) {
             const deleteImagePromises = Array.from(imagesToDelete)
               .filter(img => !img.startsWith('/') && !img.startsWith('data:') && !PUBLIC_IMAGE_RE.test(img))
-              .map(img => deleteDoc(doc(db, 'images', img)).catch(e => console.error("Failed to delete image: ", e)));
+              .map(img => deleteDoc(doc(db, 'images', selectedVersionId, 'images', img)).catch(e => console.error("Failed to delete image: ", e)));
             await Promise.all(deleteImagePromises);
           }
         }
@@ -577,7 +577,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
             if (dataUrlBytes(item.url) > MAX_FIRESTORE_IMAGE_BYTES) {
               throw new Error(`图片 ${item.name} 超过 ${MAX_FIRESTORE_IMAGE_LABEL}，请压缩后再上传。`);
             }
-            const docRef = doc(db, 'images', item.name); 
+            const docRef = doc(db, 'images', selectedVersionId, 'images', item.name); 
             uploads.push(setDoc(docRef, { content: item.url }));
           }
         });

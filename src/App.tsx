@@ -11,7 +11,7 @@ import { handleFirestoreError, OperationType } from './utils/firestoreErrorHandl
 const ADMIN_PASSWORD = '5834';
 const PUBLIC_IMAGE_RE = /^[\w-]+\.(png|jpe?g|gif|webp|svg)$/i;
 
-const OptionImage = ({ optImg }: { optImg: string }) => {
+const OptionImage = ({ optImg, versionId }: { optImg: string; versionId: string }) => {
   const [srcPath, setSrcPath] = useState('');
   const [errorUrl, setErrorUrl] = useState(false);
 
@@ -24,7 +24,7 @@ const OptionImage = ({ optImg }: { optImg: string }) => {
       // Fetch from Firebase
       const fetchImage = async () => {
         try {
-          const docRef = doc(db, 'images', optImg);
+          const docRef = doc(db, 'images', versionId, 'images', optImg);
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
             setSrcPath(docSnap.data().content);
@@ -37,7 +37,7 @@ const OptionImage = ({ optImg }: { optImg: string }) => {
       };
       fetchImage();
     }
-  }, [optImg]);
+  }, [optImg, versionId]);
 
   if (errorUrl || !srcPath) return null;
 
@@ -262,7 +262,7 @@ export default function App() {
                       {currentQuestion.text}
                     </h2>
 
-                    <QuestionImage id={currentQuestion.id} fallbackText={currentQuestion.imageFallbackText} images={currentQuestion.images} />
+                    <QuestionImage id={currentQuestion.id} fallbackText={currentQuestion.imageFallbackText} images={currentQuestion.images} versionId={currentVersionId} />
                     
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
                       {currentQuestion.options.map((option, idx) => {
@@ -290,7 +290,7 @@ export default function App() {
                             <div className="flex flex-col items-start w-full">
                               {!hideText && <span className="font-bold text-left leading-snug">{displayOption}</span>}
                               {optImg && (
-                                <OptionImage optImg={optImg} />
+                                <OptionImage optImg={optImg} versionId={currentVersionId} />
                               )}
                             </div>
                           </button>
@@ -399,7 +399,7 @@ export default function App() {
                         </div>
                         <h4 className="text-xl font-bold leading-tight mb-6">{q.text}</h4>
                         
-                        <QuestionImage id={q.id} fallbackText={q.imageFallbackText} images={q.images} />
+                        <QuestionImage id={q.id} fallbackText={q.imageFallbackText} images={q.images} versionId={currentVersionId} />
 
                         <div className="mt-8 flex flex-col gap-3">
                           <div className="flex flex-col sm:flex-row sm:items-start gap-2 p-4 bg-zinc-50 border-2 border-dashed border-zinc-300 rounded-2xl">
@@ -408,7 +408,7 @@ export default function App() {
                               {!hideUserText && <div>{userAnswer !== undefined ? String.fromCharCode(65 + userAnswer) + ". " + displayUserAnswer : '未作答'}</div>}
                               {hideUserText && <div>{userAnswer !== undefined ? String.fromCharCode(65 + userAnswer) + ". " : '未作答'}</div>}
                               {userAnswer !== undefined && q.optionImages?.[userAnswer] && (
-                                <OptionImage optImg={q.optionImages[userAnswer]} />
+                                <OptionImage optImg={q.optionImages[userAnswer]} versionId={currentVersionId} />
                               )}
                             </span>
                           </div>
@@ -419,7 +419,7 @@ export default function App() {
                                 {!hideCorrectText && <div>{String.fromCharCode(65 + q.answer)}. {displayCorrectAnswer}</div>}
                                 {hideCorrectText && <div>{String.fromCharCode(65 + q.answer)}. </div>}
                                 {q.optionImages?.[q.answer] && (
-                                  <OptionImage optImg={q.optionImages[q.answer]} />
+                                  <OptionImage optImg={q.optionImages[q.answer]} versionId={currentVersionId} />
                                 )}
                               </span>
                             </div>

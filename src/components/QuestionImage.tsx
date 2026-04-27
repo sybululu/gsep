@@ -5,18 +5,18 @@ import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHand
 
 const PUBLIC_IMAGE_RE = /^[\w-]+\.(png|jpe?g|gif|webp|svg)$/i;
 
-export const QuestionImage = ({ id, fallbackText, images }: { id: string; fallbackText?: string, images?: string[] }) => {
+export const QuestionImage = ({ id, fallbackText, images, versionId }: { id: string; fallbackText?: string; images?: string[]; versionId?: string }) => {
   const [errorUrls, setErrorUrls] = useState<Record<string, boolean>>({});
   const [firebaseImages, setFirebaseImages] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    if (!images || images.length === 0) return;
+    if (!images || images.length === 0 || !versionId) return;
     
     images.forEach(async (img) => {
       // If NOT a local path and we haven't fetched it
       if (!img.startsWith('/') && !img.startsWith('data:') && !PUBLIC_IMAGE_RE.test(img) && !firebaseImages[img] && !errorUrls[img]) {
         try {
-          const docRef = doc(db, 'images', img);
+          const docRef = doc(db, 'images', versionId, 'images', img);
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
             setFirebaseImages(prev => ({ ...prev, [img]: docSnap.data().content }));
@@ -26,7 +26,7 @@ export const QuestionImage = ({ id, fallbackText, images }: { id: string; fallba
         }
       }
     });
-  }, [images]);
+  }, [images, versionId]);
 
   if (images && images.length > 0) {
     return (

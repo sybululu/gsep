@@ -20,7 +20,7 @@ export async function saveQuestionBankToFirestore(
     }
   }
 
-  await Promise.all(libraryImages.map(image => setDoc(doc(db, 'images', image.name), {
+  await Promise.all(libraryImages.map(image => setDoc(doc(db, 'images', selectedId, 'images', image.name), {
     content: image.content,
   })));
 
