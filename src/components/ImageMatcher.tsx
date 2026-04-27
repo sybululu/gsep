@@ -639,15 +639,6 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         </div>
       )}
 
-      {/* DEBUG: 登录状态 */}
-      <div className="fixed top-0 left-0 bg-black text-white p-2 text-xs z-[9999]">
-        <pre>{JSON.stringify({ 
-          hasGoogleUser: !!googleUser, 
-          googleUserName: googleUser?.name,
-          selectedVersionId 
-        }, null, 2)}</pre>
-      </div>
-
       {/* Header */}
       <div className="shrink-0 bg-white p-4 border-b-2 border-slate-200 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-3 px-4">
