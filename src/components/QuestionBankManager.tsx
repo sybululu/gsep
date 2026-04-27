@@ -1,4 +1,4 @@
-import { useEffect, useState, type DragEvent } from 'react';
+import { useEffect, useState, useRef, type DragEvent } from 'react';
 import { ChevronDown, Download, FileJson, Loader2, Plus, Upload, X } from 'lucide-react';
 import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
 import type { Question, QuizVersion } from '../data';
@@ -31,15 +31,18 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
   const [uploadHover, setUploadHover] = useState(false);
   const [hoverZone, setHoverZone] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  
+  // 用于存储已从图库移除但仍在题目中使用的图片内容
+  const usedImagesRef = useRef<Record<string, string>>({});
 
   const localImages = Object.fromEntries(libraryImages.map(image => [image.name, image.content]));
 
-  // 拖拽到题目后保留图片内容（不从 localImages 中移除）
-  const usedImages = Object.fromEntries(
-    questions.flatMap(q => [...q.images, ...q.optionImages])
-      .filter(img => localImages[img] || cloudImages[img])
-      .map(img => [img, localImages[img] || cloudImages[img]])
-  );
+  // 收集所有使用的图片内容（包括云端和本地/已从图库移除的）
+  const usedImages = {
+    ...usedImagesRef.current,
+    ...localImages,
+    ...cloudImages
+  };
 
   useEffect(() => {
     const selected = versions.find(version => version.id === selectedId);
@@ -193,7 +196,16 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     event.stopPropagation();
     setHoverZone('');
     
-    // 拖拽图片后更新题目
+    // 从 library 拖来的图片，使用后从图库移除，但保留内容用于显示
+    if (payload.from === 'library') {
+      const imageContent = libraryImages.find(img => img.name === payload.image)?.content;
+      if (imageContent) {
+        // 同时更新 usedImagesRef，保留图片内容
+        usedImagesRef.current = { ...usedImagesRef.current, [payload.image]: imageContent };
+      }
+      setLibraryImages(prev => prev.filter(img => img.name !== payload.image));
+    }
+    
     setQuestions(prev => moveQuestionImage(prev, payload, questionId, target));
   };
 
