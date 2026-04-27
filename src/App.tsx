@@ -100,6 +100,13 @@ export default function App() {
   const totalQuestions = questions.length;
   const isLastQuestion = currentQuestionIndex === totalQuestions - 1;
 
+  // 动态计算各类题目数量和分数
+  const singleQuestions = questions.filter(q => q.type === 'single');
+  const tfQuestions = questions.filter(q => q.type === 'tf');
+  const singleCount = singleQuestions.length;
+  const tfCount = tfQuestions.length;
+  const totalScore = questions.reduce((sum, q) => sum + q.score, 0);
+
   const handleOpenImageMatcher = async () => {
     const pwd = window.prompt("请输入管理员密码：");
     if (!pwd) return;
@@ -154,8 +161,6 @@ export default function App() {
     });
     return score;
   };
-
-  const totalScore = questions.reduce((sum, q) => sum + q.score, 0);
 
   if (loading) {
     return (
@@ -216,7 +221,7 @@ export default function App() {
             </div>
             <h2 className="text-3xl font-black uppercase tracking-tight text-black mb-4">开始答题</h2>
             <p className="text-lg font-bold text-zinc-500 mb-8 max-w-md mx-auto leading-relaxed">
-              本次测试包含 10 道单选题和 5 道判断题，满分 50 分。答题结束后将自动生成分数并可查看解析。
+              本次测试包含 {singleCount > 0 ? `${singleCount} 道单选题` : ''}{singleCount > 0 && tfCount > 0 ? '和' : ''}{tfCount > 0 ? `${tfCount} 道判断题` : ''}{totalQuestions > 0 ? `，满分 ${totalScore} 分` : '。暂无题目可作答'}。
             </p>
             <button
               onClick={handleStart}
