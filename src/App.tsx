@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronRight, ChevronLeft, CheckCircle2, RotateCcw, AlertCircle, Play, ChevronDown, Loader2 } from 'lucide-react';
+import { CheckCircle2, RotateCcw, AlertCircle, Play, ChevronDown, Loader2 } from 'lucide-react';
 import { quizVersions as initialQuizVersions, QuizVersion, Question } from './data';
 import { QuestionImage } from './components/QuestionImage';
 
@@ -51,7 +51,7 @@ export default function App() {
   const [answers, setAnswers] = useState<Record<string, number>>({});
   
   const [versions, setVersions] = useState<QuizVersion[]>(initialQuizVersions);
-  const [currentVersionId, setCurrentVersionId] = useState(initialQuizVersions[0].id);
+  const [currentVersionId, setCurrentVersionId] = useState(initialQuizVersions[0]?.id ?? '');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -143,6 +143,8 @@ export default function App() {
   };
 
   const totalScore = questions.reduce((sum, q) => sum + q.score, 0);
+  const calculatedScore = calculateScore();
+  const scorePercent = totalScore > 0 ? (calculatedScore / totalScore) * 100 : 0;
 
   if (loading) {
     return (
@@ -228,7 +230,7 @@ export default function App() {
                 <div className="w-full shrink-0 h-4 bg-white border-2 border-black rounded-full overflow-hidden mb-6">
                   <div 
                     className="h-full bg-[#EC4899] border-r-2 border-black transition-all duration-300"
-                    style={{ width: `${((currentQuestionIndex) / totalQuestions) * 100}%` }}
+                    style={{ width: `${((currentQuestionIndex + 1) / totalQuestions) * 100}%` }}
                   ></div>
                 </div>
 
@@ -293,7 +295,7 @@ export default function App() {
                   
                   <button
                     onClick={handleNext}
-                    disabled={answers[currentQuestion.id] === undefined && !isLastQuestion}
+                    disabled={answers[currentQuestion.id] === undefined}
                     className="px-8 py-3 bg-black text-white border-2 border-black rounded-full font-black text-sm uppercase hover:translate-y-[-2px] transition-all disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed shadow-[4px_4px_0px_0px_rgba(59,130,246,1)] disabled:shadow-none"
                   >
                     {isLastQuestion ? '提交试卷' : '下一题'}
@@ -325,12 +327,12 @@ export default function App() {
               <span className="text-sm font-black uppercase tracking-widest mb-2 px-4 py-1 bg-white border-2 border-black rounded-full">最终得分</span>
               
               <div className="flex justify-center flex-col items-center gap-2 mt-4 mb-2">
-                <span className="text-8xl font-black text-black leading-none tracking-tighter">{calculateScore()}</span>
+                <span className="text-8xl font-black text-black leading-none tracking-tighter">{calculatedScore}</span>
                 <span className="text-xl font-bold text-zinc-600">out of {totalScore}</span>
               </div>
               
               <div className="w-full max-w-sm bg-white/50 h-3 rounded-full mt-4 border-2 border-black overflow-hidden">
-                <div className="bg-black h-full rounded-full" style={{ width: `${(calculateScore() / totalScore) * 100}%` }}></div>
+                <div className="bg-black h-full rounded-full" style={{ width: `${scorePercent}%` }}></div>
               </div>
 
               <button
@@ -419,4 +421,3 @@ export default function App() {
     </div>
   );
 }
-
