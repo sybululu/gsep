@@ -252,9 +252,17 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
   const save = async () => {
     if (!(await ensureQuestionBankAdmin(password))) return;
     try {
-      const quiz = await saveQuestionBankToFirestore(selectedId, name, questions, libraryImages);
+      // 合并 libraryImages 和 usedImagesRef 中的所有图片
+      const allImages: LibraryImage[] = [...libraryImages];
+      Object.entries(usedImagesRef.current).forEach(([name, content]) => {
+        if (!allImages.find(img => img.name === name)) {
+          allImages.push({ id: name, name, content });
+        }
+      });
+      
+      const quiz = await saveQuestionBankToFirestore(selectedId, name, questions, allImages);
       setVersions(prev => prev.map(version => version.id === selectedId ? quiz : version));
-      alert(`同步成功：${quiz.questions.length} 道题，${libraryImages.length} 张图片。`);
+      alert(`同步成功：${quiz.questions.length} 道题，${allImages.length} 张图片。`);
       onClose();
     } catch (error: any) {
       alert('保存失败：' + (error?.message || String(error)));
