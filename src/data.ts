@@ -56,7 +56,7 @@ export const quizVersions: QuizVersion[] = [
         score: 3,
         imageFallbackText: '提示：A选项图标为左右三角，B选项图标为上下三角，C选项为油漆桶，D选项为橡皮擦。',
         images: ['a1ee8240-4bb5-47ee-bd62-02670f5b5b2b.png'],
-        optionImages: ['c064c5aa-8bdd-4989-940a-dce85ba3dc35.png', 'df53b41b-dd87-40cc-b6cc-e0846be344b2.png', 'fe7da822-77de-4922-af1b-aac6ef810904.png', '']
+        optionImages: ['c064c5aa-8bdd-4989-940a-dce85ba3dc35.png', 'df53b41b-dd87-40cc-b6cc-e0846be344b2.png', 'fe7da822-77de-4922-af1b-aac6ef810904.png']
       },
       {
         id: 'q4',

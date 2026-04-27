@@ -109,6 +109,51 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     setLibraryImages(prev => [...prev, ...newItems]);
   };
 
+  // 处理图片拖回图片库
+  const onLibraryImageDrop = (event: DragEvent<HTMLDivElement>) => {
+    const payload = readQuestionImageDrag(event);
+    if (!payload) return;
+    event.preventDefault();
+    event.stopPropagation();
+    
+    // 只有从 DropZone 拖来的图片才能拖回图片库
+    if (payload.from === 'library') return;
+    
+    // 将图片添加到图片库
+    const imageName = payload.image;
+    // 检查图片是否已存在于库中
+    if (!libraryImages.find(img => img.name === imageName)) {
+      // 如果是云端图片，尝试从 cloudImages 获取
+      const content = cloudImages[imageName];
+      if (content) {
+        setLibraryImages(prev => [...prev, {
+          id: `local-${Date.now()}-${imageName}`,
+          name: imageName,
+          content: content,
+        }]);
+      }
+    }
+    
+    // 从原题目位置移除图片
+    if (payload.questionId && payload.index !== undefined) {
+      setQuestions(prev => normalizeQuizQuestions(prev.map(question => {
+        if (question.id !== payload.questionId) return question;
+        return {
+          ...question,
+          [payload.from]: question[payload.from].filter((_, idx) => idx !== payload.index),
+        };
+      })));
+    }
+  };
+
+  // 处理图片拖拽到图片库上方时的 hover 状态
+  const onLibraryDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes('text/gesp-image')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setUploadHover(true);
+  };
+
   const onImageDrop = (event: DragEvent<HTMLElement>, questionId: string, target: ImageTarget) => {
     const payload = readQuestionImageDrag(event);
     if (!payload) return;
@@ -208,6 +253,8 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
           onUploadDrop={onUploadDrop}
           onImageDragStart={startQuestionImageDrag}
           onRemove={index => setLibraryImages(prev => prev.filter((_, i) => i !== index))}
+          onLibraryImageDrop={onLibraryImageDrop}
+          onLibraryDragOver={onLibraryDragOver}
         />
         <main className="flex-1 overflow-y-auto p-6">
           <div className="mb-4 flex justify-between rounded-2xl border bg-white p-4">
