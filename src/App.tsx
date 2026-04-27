@@ -24,13 +24,21 @@ const OptionImage = ({ optImg, versionId }: { optImg: string; versionId: string 
       // Fetch from Firebase
       const fetchImage = async () => {
         try {
-          const docRef = doc(db, 'images', versionId, 'images', optImg);
-          const docSnap = await getDoc(docRef);
+          // 先尝试新路径
+          let docRef = doc(db, 'images', versionId, 'images', optImg);
+          let docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
             setSrcPath(docSnap.data().content);
-          } else {
-            setSrcPath(`/${optImg}`);
+            return;
           }
+          // 尝试旧路径
+          docRef = doc(db, 'images', optImg);
+          docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            setSrcPath(docSnap.data().content);
+            return;
+          }
+          setSrcPath(`/${optImg}`);
         } catch (e) {
           setSrcPath(`/${optImg}`);
         }

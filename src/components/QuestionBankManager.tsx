@@ -53,7 +53,7 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     setVisibleCount(Math.min(PAGE_SIZE, nextQuestions.length || PAGE_SIZE));
     setCloudImages({});
     
-    // 加载对应题库的云端图片
+    // 加载对应题库的云端图片（旧路径）
     const loadLibraryImages = async () => {
       try {
         const imagesRef = collection(db, 'images', selectedId, 'images');
@@ -65,6 +65,16 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
             loaded.push({ id: d.id, name: d.id, content: data.content });
           }
         });
+        // 如果没找到，尝试旧路径
+        if (loaded.length === 0) {
+          const oldSnap = await getDocs(collection(db, 'images'));
+          oldSnap.forEach(d => {
+            const data = d.data();
+            if (typeof data.content === 'string') {
+              loaded.push({ id: d.id, name: d.id, content: data.content });
+            }
+          });
+        }
         setLibraryImages(loaded);
       } catch (error) {
         console.warn('Failed to load library images', error);
@@ -85,8 +95,16 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
 
     newIds.forEach(async image => {
       try {
-        const snap = await getDoc(doc(db, 'images', selectedId, 'images', image));
-        const content = snap.exists() ? snap.data().content : '';
+        // 先尝试新路径
+        let snap = await getDoc(doc(db, 'images', selectedId, 'images', image));
+        let content = snap.exists() ? snap.data().content : '';
+        
+        // 如果没找到，尝试旧路径
+        if (!content) {
+          snap = await getDoc(doc(db, 'images', image));
+          content = snap.exists() ? snap.data().content : '';
+        }
+        
         if (typeof content === 'string') setCloudImages(prev => ({ ...prev, [image]: content }));
       } catch (error) {
         console.warn('Failed to load cloud image', image, error);
