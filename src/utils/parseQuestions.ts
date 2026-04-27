@@ -80,9 +80,16 @@ export const parseTextToQuestions = (rawText: string): Question[] => {
     const optionMatches = [...block.matchAll(/([A-D])[、.]\s*([\s\S]*?)(?=\s*[A-D][、.]|$)/g)];
     
     const options: string[] = [];
+    let validOptionCount = 0;
     optionMatches.forEach(match => {
-      options.push(match[2].trim());
+      const optText = match[2].trim();
+      options.push(optText);
+      // 统计有实质内容的选项（不只是单个字符或空）
+      if (optText.length > 1) validOptionCount++;
     });
+
+    // 如果有效选项少于2个，预留 A/B/C/D 空白选项（可能是图片选项）
+    const useOptions = validOptionCount >= 2 ? options : ['A', 'B', 'C', 'D'];
 
     // 题目文本：去掉题号和选项部分
     let title = block
@@ -97,7 +104,7 @@ export const parseTextToQuestions = (rawText: string): Question[] => {
       id: `q-${Date.now()}-${Math.random().toString(36).substring(2, 9)}-${idx}`,
       type: 'single',
       text: title,
-      options: options.length >= 2 ? options : ['A', 'B', 'C', 'D'],
+      options: useOptions,
       answer: answerIndex,
       score: singleScore,
       images: [],
