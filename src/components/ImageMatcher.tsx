@@ -40,6 +40,34 @@ const makeImageDocName = (file: File) => {
 
 const dataUrlBytes = (value: string) => Math.ceil(value.length * 0.75);
 
+const makeQuestionImageItems = (questionId: string, images: string[] = [], kind: 'body' | 'options') => {
+  return images.filter(Boolean).map((img, i) => ({
+    id: `${questionId}-${kind === 'body' ? 'body' : 'opt'}-img-${i}-${img}`,
+    name: img,
+    url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
+  }));
+};
+
+const buildBoardForQuestions = (questions: Question[], unassigned: Item[] = []): Board => {
+  const nextBoard: Board = { unassigned: [...unassigned] };
+
+  questions.forEach(q => {
+    nextBoard[`${q.id}-body`] = makeQuestionImageItems(q.id, q.images || [], 'body');
+    nextBoard[`${q.id}-options`] = makeQuestionImageItems(q.id, q.optionImages || [], 'options');
+  });
+
+  return nextBoard;
+};
+
+const collectQuestionImages = (questions: Question[]) => {
+  const images = new Set<string>();
+  questions.forEach(q => {
+    (q.images || []).filter(Boolean).forEach(img => images.add(img));
+    (q.optionImages || []).filter(Boolean).forEach(img => images.add(img));
+  });
+  return images;
+};
+
 export const ImageMatcher = ({ password, initialVersions, onClose }: { password?: string, initialVersions: QuizVersion[], onClose: () => void }) => {
   const [versions, setVersions] = useState<QuizVersion[]>(initialVersions);
   const [selectedVersionId, setSelectedVersionId] = useState(initialVersions[0]?.id || '');
@@ -55,6 +83,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [importLoading, setImportLoading] = useState(false);
   const [draggingItem, setDraggingItem] = useState<{ droppableId: string; index: number; id: string } | null>(null);
   const [dragOverZone, setDragOverZone] = useState<string | null>(null);
+  const [editorKey, setEditorKey] = useState(0);
 
   useEffect(() => {
     if (!selectedVersionId) return;
@@ -64,25 +93,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     setVersionName(currentVersion.name);
     setLocalQuestions(JSON.parse(JSON.stringify(currentVersion.questions)));
     
-    const allKnownImages = new Set<string>();
-    const initialBoard: Board = { unassigned: board.unassigned || [] }; 
-    
-    currentVersion.questions.forEach(q => {
-      const imgs = (q.images || []).filter(Boolean);
-      const optImgs = (q.optionImages || []).filter(Boolean);
-      initialBoard[`${q.id}-body`] = imgs.map((img, i) => ({
-        id: `${q.id}-body-img-${i}-${img}`,
-        name: img,
-        url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
-      }));
-      initialBoard[`${q.id}-options`] = optImgs.map((img, i) => ({
-        id: `${q.id}-opt-img-${i}-${img}`,
-        name: img,
-        url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
-      }));
-      imgs.forEach(i => allKnownImages.add(i));
-      optImgs.forEach(i => allKnownImages.add(i));
-    });
+    const allKnownImages = collectQuestionImages(currentVersion.questions);
 
     const publicImgs = [
       "0401f5f5-ae0d-4bd5-a594-20986816f754.png", "0f4c5edd-24ad-46db-ac17-42c961f7fc80.png",
@@ -108,8 +119,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       "fcf0662e-5518-47f1-b5fa-f14345eb435a.png", "fe7da822-77de-4922-af1b-aac6ef810904.png"
     ];
 
-    const currentUnassigned = initialBoard.unassigned.filter(i => i.id.startsWith('local-'));
-    initialBoard.unassigned = [...currentUnassigned];
+    const currentUnassigned = (board.unassigned || []).filter(i => i.id.startsWith('local-'));
+    const initialBoard = buildBoardForQuestions(currentVersion.questions, currentUnassigned);
 
     publicImgs.forEach(img => {
       if (!allKnownImages.has(img)) {
@@ -147,7 +158,10 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     }
   };
 
+  const isFileDrag = (e: DragEvent<HTMLDivElement>) => Array.from(e.dataTransfer.types).includes('Files');
+
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(e)) return;
     e.preventDefault();
     e.stopPropagation();
     setDragOverlay(true);
@@ -160,12 +174,14 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   };
   
   const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(e)) return;
     e.preventDefault();
     e.stopPropagation();
     setDragOverlay(false);
   };
   
   const handleDrop = async (e: DragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(e)) return;
     e.preventDefault();
     e.stopPropagation();
     setDragOverlay(false);
@@ -499,20 +515,17 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         const shouldOverwrite = window.confirm(`成功提取出 ${questions.length} 道题目！\n\n点击“确定”清空当前题目并替换为您导入的题目；\n点击“取消”则将新题目追加到当前题库的末尾。`);
         
         const nextQuestions = shouldOverwrite ? questions : [...localQuestions, ...questions];
+        const nextBoard = buildBoardForQuestions(
+          nextQuestions,
+          shouldOverwrite ? [] : (board.unassigned || [])
+        );
 
-        setBoard(prev => {
-          const pb = shouldOverwrite ? { unassigned: [] } : { ...prev };
-          questions.forEach(q => {
-            pb[`${q.id}-body`] = [];
-            pb[`${q.id}-options`] = [];
-          });
-          return pb;
-        });
-        
-        setLocalQuestions(nextQuestions);
         setDraggingItem(null);
         setDragOverZone(null);
         setTextImportModalOpen(false);
+        setEditorKey(k => k + 1);
+        setLocalQuestions(nextQuestions);
+        setBoard(nextBoard);
       } else {
         alert('未能识别出任何题目格式。请确保文本采用了如 "1. " 作为题号开头，并指定了 "答案：A"。');
       }
@@ -577,9 +590,6 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   return (
     <div 
       className="fixed inset-0 z-[60] bg-[#F1F5F9] flex flex-col"
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
     >
       {dragOverlay && (
         <div className="absolute inset-0 z-[100] bg-blue-500/20 backdrop-blur-sm border-4 border-dashed border-blue-500 flex items-center justify-center pointer-events-none">
@@ -716,7 +726,12 @@ D. 深圳
         <div className="flex-1 flex overflow-hidden">
           
           {/* 左侧：图库 */}
-          <div className="w-1/3 min-w-[300px] max-w-[400px] border-r-2 border-slate-200 bg-white flex flex-col">
+          <div
+            className="w-1/3 min-w-[300px] max-w-[400px] border-r-2 border-slate-200 bg-white flex flex-col"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
             <div className="p-4 border-b border-slate-100 bg-slate-50 shrink-0">
               <h2 className="font-bold text-slate-800 text-lg">图库 / 拖拽上传图片</h2>
               <p className="text-xs text-slate-500 mt-1">可以将本地图片直接拖拽到此面板</p>
@@ -763,7 +778,7 @@ D. 深圳
 
           {/* 右侧：题目编辑列表 */}
           <div className="flex-1 overflow-y-auto bg-slate-50 p-6 custom-scrollbar">
-            <div className="max-w-4xl mx-auto space-y-6">
+            <div key={editorKey} className="max-w-4xl mx-auto space-y-6">
               
               <div className="bg-white px-6 py-4 border-2 border-slate-200 rounded-2xl shadow-sm flex items-center justify-between">
                 <div className="flex items-center gap-4 flex-1">
