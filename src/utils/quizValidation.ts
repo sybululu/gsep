@@ -7,7 +7,11 @@ export const normalizeQuizQuestion = (question: Partial<Question>, index: number
     ? question.options.map(option => String(option ?? '').trim()).filter(Boolean)
     : fallbackOptions;
   const options = type === 'tf' ? ['正确', '错误'] : rawOptions;
-  const answer = Number.isFinite(question.answer) ? Number(question.answer) : 0;
+  // 兼容字符串和数字类型的答案
+  const rawAnswer = question.answer;
+  const answer = (rawAnswer !== undefined && rawAnswer !== null && rawAnswer !== '')
+    ? Number(rawAnswer)
+    : 0;
 
   return {
     id: String(question.id || `q-${Date.now()}-${index}`),
