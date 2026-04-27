@@ -14,9 +14,39 @@ export const parseTextToQuestions = (text: string): Question[] => {
 
   // Prepass: extract all answers
   const allSeqAnswers: { ans: number; isTf: boolean }[] = [];
+  const globalAnswers: { qNum: number; ans: number; isTf: boolean }[] = [];
 
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
+
+    // 表格格式：题号 1 2 3... 和 答案 A B C... 分两行
+    if (/^题号/.test(line) && i + 1 < lines.length) {
+      const nextLine = lines[i + 1];
+      const ansLineMatch = nextLine.match(/^答案[\t\s]*([A-F对错√×\s]+)/i);
+      if (ansLineMatch) {
+        let str = ansLineMatch[1].replace(/\t/g, ' ').trim();
+        let ansList: string[] = /\s/.test(str) ? str.split(/\s+/) : str.split('');
+        
+        // 尝试从题号行提取数字
+        const numMatch = line.match(/[\d]+/g);
+        
+        for (let j = ansList.length - 1; j >= 0; j--) {
+          const aStr = ansList[j].trim().toUpperCase();
+          if (!aStr || aStr === '答案') continue;
+          const isTf = aStr === '对' || aStr === '√' || aStr === '错' || aStr === '×';
+          const aCode = (aStr === '对' || aStr === '√') ? 0 : ((aStr === '错' || aStr === '×') ? 1 : aStr.charCodeAt(0) - 65);
+          
+          if (numMatch && numMatch[j]) {
+            globalAnswers.push({ qNum: parseInt(numMatch[j]), ans: aCode, isTf });
+          } else {
+            allSeqAnswers.push({ ans: aCode, isTf });
+          }
+        }
+        lines[i] = '';
+        lines[i + 1] = '';
+        continue;
+      }
+    }
 
     // Pure answer format: 答案：B A B A 或 答案：√ √ ×
     const pureAnsMatch = line.match(/^(?:参考答案|答案)[：:\s]*([A-F对错√×\s]{2,})$/i);
@@ -113,7 +143,8 @@ export const parseTextToQuestions = (text: string): Question[] => {
         answer: 0,
         score: inTfSection ? currentTfScore : currentSingleScore,
         images: [],
-        optionImages: []
+        optionImages: [],
+        qNum: parseInt(qMatch[1])
       };
       currentOptions = [];
       continue;
@@ -151,16 +182,40 @@ export const parseTextToQuestions = (text: string): Question[] => {
   }
 
   // Apply answers based on type
-  parsed.forEach((q) => {
-    if (q.type === 'tf' && tfIdx < tfAnswers.length) {
-      q.answer = tfAnswers[tfIdx++].ans;
-    } else if (q.type === 'single' && singleIdx < singleAnswers.length) {
-      q.answer = singleAnswers[singleIdx++].ans;
+  parsed.forEach((q, idx) => {
+    let matchedAns;
+    
+    // 优先使用按题号匹配的答案（表格格式）
+    const qNumMatch = (q as any).qNum;
+    if (qNumMatch !== undefined) {
+      const pAns = globalAnswers.find(ga => ga.qNum === qNumMatch);
+      if (pAns) matchedAns = pAns;
+    }
+    
+    // 其次使用按顺序的答案
+    if (!matchedAns) {
+      if (q.type === 'tf' && tfIdx < tfAnswers.length) {
+        matchedAns = tfAnswers[tfIdx++];
+      } else if (q.type === 'single' && singleIdx < singleAnswers.length) {
+        matchedAns = singleAnswers[singleIdx++];
+      }
+    }
+    
+    if (matchedAns) {
+      q.answer = matchedAns.ans;
+      if (matchedAns.isTf) {
+        q.type = 'tf';
+        q.options = ['正确', '错误'];
+      } else if (q.type === 'tf') {
+        q.type = 'single';
+        q.options = ['A', 'B', 'C', 'D'];
+      }
     }
     
     if (q.answer === undefined || isNaN(q.answer) || q.answer < 0 || q.answer >= (q.options?.length || 1)) {
       q.answer = 0;
     }
+    delete (q as any).qNum;
   });
 
   return parsed;
