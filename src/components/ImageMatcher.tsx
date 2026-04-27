@@ -1,15 +1,11 @@
-import React, { useState, useEffect, DragEvent } from 'react';
+import React, { useState, useEffect, DragEvent, ReactNode } from 'react';
 import { QuizVersion, Question } from '../data';
 import { Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Loader2 } from 'lucide-react';
-import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 import { parseTextToQuestions as parseQuestionText } from '../utils/parseQuestions';
-
-const SafeDraggable = Draggable as React.ComponentType<any>;
-const SafeDragDropContext = DragDropContext as React.ComponentType<any>;
 
 interface Item {
   id: string; // The image url or local base64
@@ -19,6 +15,11 @@ interface Item {
 
 interface Board {
   [key: string]: Item[];
+}
+
+interface NativeDropResult {
+  source: { droppableId: string; index: number };
+  destination?: { droppableId: string; index: number } | null;
 }
 
 const ADMIN_PASSWORD = '5834';
@@ -52,7 +53,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [textImportModalOpen, setTextImportModalOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importLoading, setImportLoading] = useState(false);
-  const [dndVersion, setDndVersion] = useState(0);
+  const [draggingItem, setDraggingItem] = useState<{ droppableId: string; index: number; id: string } | null>(null);
+  const [dragOverZone, setDragOverZone] = useState<string | null>(null);
 
   useEffect(() => {
     if (!selectedVersionId) return;
@@ -119,7 +121,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     setLoading(false);
   }, [selectedVersionId, versions]);
 
-  const onDragEnd = (result: DropResult) => {
+  const onDragEnd = (result: NativeDropResult) => {
     const { source, destination } = result;
     if (!destination) return;
     if (source.droppableId === destination.droppableId && source.index === destination.index) return;
@@ -258,6 +260,85 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     }
   };
 
+  const NativeDroppable = ({
+    droppableId,
+    children
+  }: {
+    droppableId: string;
+    direction?: 'vertical' | 'horizontal';
+    children: (provided: any, snapshot: { isDraggingOver: boolean }) => ReactNode;
+  }) => {
+    const provided = {
+      innerRef: undefined,
+      droppableProps: {
+        onDragOver: (e: React.DragEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (draggingItem) setDragOverZone(droppableId);
+        },
+        onDragEnter: (e: React.DragEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (draggingItem) setDragOverZone(droppableId);
+        },
+        onDragLeave: (e: React.DragEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOverZone(prev => prev === droppableId ? null : prev);
+        },
+        onDrop: (e: React.DragEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!draggingItem) return;
+          const listLength = board[droppableId]?.length || 0;
+          onDragEnd({
+            source: { droppableId: draggingItem.droppableId, index: draggingItem.index },
+            destination: { droppableId, index: listLength },
+          });
+          setDraggingItem(null);
+          setDragOverZone(null);
+        }
+      },
+      placeholder: null
+    };
+
+    return <>{children(provided, { isDraggingOver: dragOverZone === droppableId })}</>;
+  };
+
+  const NativeDraggable = ({
+    draggableId,
+    droppableId,
+    index,
+    children
+  }: {
+    key?: React.Key;
+    draggableId: string;
+    droppableId: string;
+    index: number;
+    children: (provided: any, snapshot: { isDragging: boolean }) => ReactNode;
+  }) => {
+    const provided = {
+      innerRef: undefined,
+      draggableProps: {
+        draggable: true,
+        onDragStart: (e: React.DragEvent) => {
+          e.stopPropagation();
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', draggableId);
+          setDraggingItem({ droppableId, index, id: draggableId });
+        },
+        onDragEnd: () => {
+          setDraggingItem(null);
+          setDragOverZone(null);
+        },
+        style: undefined
+      },
+      dragHandleProps: {}
+    };
+
+    return <>{children(provided, { isDragging: draggingItem?.id === draggableId })}</>;
+  };
+
   const ensureAdminSignedIn = async () => {
     if (password !== ADMIN_PASSWORD) {
       alert(`没有操作权限`);
@@ -281,7 +362,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       }
       return true;
     } catch (err) {
-      alert('需要登录管理员 Google 账号后才能同步题库。');
+      alert('Firebase Google login is required before writing to the cloud database. If no popup appears, check that Google provider is enabled and this domain is authorized in Firebase Auth.');
       console.error(err);
       return false;
     }
@@ -429,7 +510,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         });
         
         setLocalQuestions(nextQuestions);
-        setDndVersion(prev => prev + 1);
+        setDraggingItem(null);
+        setDragOverZone(null);
         setTextImportModalOpen(false);
       } else {
         alert('未能识别出任何题目格式。请确保文本采用了如 "1. " 作为题号开头，并指定了 "答案：A"。');
@@ -629,8 +711,8 @@ D. 深圳
         </div>
       )}
 
-      {/* Body: Drag Drop Context */}
-      <SafeDragDropContext key={dndVersion} onDragEnd={onDragEnd}>
+      {/* Body */}
+      <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 flex overflow-hidden">
           
           {/* 左侧：图库 */}
@@ -640,7 +722,7 @@ D. 深圳
               <p className="text-xs text-slate-500 mt-1">可以将本地图片直接拖拽到此面板</p>
             </div>
             
-            <Droppable droppableId="unassigned" direction="vertical">
+            <NativeDroppable droppableId="unassigned" direction="vertical">
               {(provided, snapshot) => (
                 <div className={`flex-1 overflow-y-auto p-4 custom-scrollbar transition-colors ${snapshot.isDraggingOver ? 'bg-blue-50/50' : ''}`}>
                   <div 
@@ -649,7 +731,7 @@ D. 深圳
                     className="grid grid-cols-2 gap-3 min-h-full"
                   >
                     {(board.unassigned || []).map((item, index) => (
-                      <SafeDraggable key={item.id} draggableId={item.id} index={index}>
+                      <NativeDraggable key={item.id} draggableId={item.id} index={index} droppableId="unassigned">
                         {(provided, snapshot) => (
                           <div
                             ref={provided.innerRef}
@@ -670,13 +752,13 @@ D. 深圳
                             </button>
                           </div>
                         )}
-                      </SafeDraggable>
+                      </NativeDraggable>
                     ))}
                     {provided.placeholder}
                   </div>
                 </div>
               )}
-            </Droppable>
+            </NativeDroppable>
           </div>
 
           {/* 右侧：题目编辑列表 */}
@@ -780,7 +862,7 @@ D. 深圳
                          <div className="text-xs font-bold text-slate-500 flex items-center justify-between">
                             <span>题干配图 (正文穿插)</span>
                          </div>
-                         <Droppable droppableId={`${q.id}-body`} direction="horizontal">
+                         <NativeDroppable droppableId={`${q.id}-body`} direction="horizontal">
                            {(provided, snapshot) => (
                              <div className={`relative overflow-hidden transition-colors min-h-[100px] border-2 border-dashed rounded-xl p-2 ${snapshot.isDraggingOver ? 'bg-green-50 border-green-300' : 'border-slate-200 bg-white'}`}>
                                {board[`${q.id}-body`]?.length === 0 && !snapshot.isDraggingOver && (
@@ -795,7 +877,7 @@ D. 深圳
                                  className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
                                >
                                 {board[`${q.id}-body`]?.map((item, index) => (
-                                  <SafeDraggable key={item.id} draggableId={item.id} index={index}>
+                                  <NativeDraggable key={item.id} draggableId={item.id} index={index} droppableId={`${q.id}-body`}>
                                     {(provided, snapshot) => (
                                       <div
                                         ref={provided.innerRef}
@@ -813,19 +895,19 @@ D. 深圳
                                         </button>
                                       </div>
                                     )}
-                                  </SafeDraggable>
+                                  </NativeDraggable>
                                 ))}
                                 {provided.placeholder}
                               </div>
                              </div>
                            )}
-                         </Droppable>
+                         </NativeDroppable>
                        </div>
 
                        {q.type !== 'tf' && (
                          <div className="flex flex-col gap-2">
                            <div className="text-xs font-bold text-slate-500">选项配图 (分别在此处对应 A B C D)</div>
-                           <Droppable droppableId={`${q.id}-options`} direction="horizontal">
+                           <NativeDroppable droppableId={`${q.id}-options`} direction="horizontal">
                              {(provided, snapshot) => (
                                <div className={`relative overflow-hidden transition-colors min-h-[100px] border-2 border-dashed rounded-xl p-2 ${snapshot.isDraggingOver ? 'bg-indigo-50 border-indigo-300' : 'border-slate-200 bg-white'}`}>
                                   {board[`${q.id}-options`]?.length === 0 && !snapshot.isDraggingOver && (
@@ -840,7 +922,7 @@ D. 深圳
                                     className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
                                   >
                                   {board[`${q.id}-options`]?.map((item, index) => (
-                                    <SafeDraggable key={item.id} draggableId={item.id} index={index}>
+                                    <NativeDraggable key={item.id} draggableId={item.id} index={index} droppableId={`${q.id}-options`}>
                                       {(provided, snapshot) => {
                                         const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
                                         const letter = letters[index] || (index+1);
@@ -865,13 +947,13 @@ D. 深圳
                                           </div>
                                         );
                                       }}
-                                    </SafeDraggable>
+                                    </NativeDraggable>
                                   ))}
                                   {provided.placeholder}
                                   </div>
                                </div>
                              )}
-                           </Droppable>
+                           </NativeDroppable>
                          </div>
                        )}
                     </div>
@@ -890,7 +972,7 @@ D. 深圳
           </div>
           
         </div>
-      </SafeDragDropContext>
+      </div>
     </div>
   );
 };
