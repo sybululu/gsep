@@ -98,7 +98,8 @@ export const parseTextToQuestions = (text: string): Question[] => {
         } else if (currentQ.type === 'tf') {
           currentQ.options = ['正确', '错误'];
         } else {
-          currentQ.options = ['选项A', '选项B', '选项C', '选项D'];
+          // 选择题预留4个空白选项（用于图片选项）
+          currentQ.options = ['A', 'B', 'C', 'D'];
         }
         parsed.push(currentQ as Question);
       }
@@ -141,7 +142,8 @@ export const parseTextToQuestions = (text: string): Question[] => {
     } else if (currentQ.type === 'tf') {
       currentQ.options = ['正确', '错误'];
     } else {
-      currentQ.options = ['选项A', '选项B', '选项C', '选项D'];
+      // 选择题预留4个空白选项（用于图片选项）
+      currentQ.options = ['A', 'B', 'C', 'D'];
     }
     parsed.push(currentQ as Question);
   }
