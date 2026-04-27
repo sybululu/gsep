@@ -26,6 +26,7 @@ const ADMIN_PASSWORD = '5834';
 const ADMIN_EMAIL = 'candiescot@gmail.com';
 const MAX_FIRESTORE_IMAGE_BYTES = 560_000;
 const MAX_FIRESTORE_IMAGE_LABEL = '550KB';
+const INITIAL_VISIBLE_QUESTIONS = 6;
 const PUBLIC_IMAGE_RE = /^[\w-]+\.(png|jpe?g|gif|webp|svg)$/i;
 
 const makeImageDocName = (file: File) => {
@@ -68,6 +69,27 @@ const collectQuestionImages = (questions: Question[]) => {
   return images;
 };
 
+const normalizeQuestionsForEditor = (questions: Question[]): Question[] => {
+  return questions.map((question, index) => {
+    const type: Question['type'] = question.type === 'tf' ? 'tf' : 'single';
+    const options = Array.isArray(question.options) && question.options.length > 0
+      ? question.options.map(option => String(option ?? ''))
+      : (type === 'tf' ? ['Correct', 'Wrong'] : ['A', 'B', 'C', 'D']);
+
+    return {
+      ...question,
+      id: String(question.id || `q-import-${Date.now()}-${index}`),
+      type,
+      text: String(question.text ?? ''),
+      options,
+      answer: Math.max(0, Math.min(Number.isFinite(question.answer) ? question.answer : 0, options.length - 1)),
+      score: Number.isFinite(question.score) ? question.score : (type === 'tf' ? 4 : 3),
+      images: Array.isArray(question.images) ? question.images.filter(Boolean) : [],
+      optionImages: Array.isArray(question.optionImages) ? question.optionImages.filter(Boolean) : [],
+    };
+  });
+};
+
 export const ImageMatcher = ({ password, initialVersions, onClose }: { password?: string, initialVersions: QuizVersion[], onClose: () => void }) => {
   const [versions, setVersions] = useState<QuizVersion[]>(initialVersions);
   const [selectedVersionId, setSelectedVersionId] = useState(initialVersions[0]?.id || '');
@@ -84,6 +106,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [draggingItem, setDraggingItem] = useState<{ droppableId: string; index: number; id: string } | null>(null);
   const [dragOverZone, setDragOverZone] = useState<string | null>(null);
   const [editorKey, setEditorKey] = useState(0);
+  const [visibleQuestionCount, setVisibleQuestionCount] = useState(INITIAL_VISIBLE_QUESTIONS);
 
   useEffect(() => {
     if (!selectedVersionId) return;
@@ -92,6 +115,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
 
     setVersionName(currentVersion.name);
     setLocalQuestions(JSON.parse(JSON.stringify(currentVersion.questions)));
+    setVisibleQuestionCount(Math.min(Math.max(currentVersion.questions.length, INITIAL_VISIBLE_QUESTIONS), currentVersion.questions.length || INITIAL_VISIBLE_QUESTIONS));
     
     const allKnownImages = collectQuestionImages(currentVersion.questions);
 
@@ -510,7 +534,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     await new Promise(r => setTimeout(r, 500));
     
     try {
-      const questions = parseQuestionText(importText);
+      const questions = normalizeQuestionsForEditor(parseQuestionText(importText));
       if (questions && questions.length > 0) {
         const shouldOverwrite = window.confirm(`成功提取出 ${questions.length} 道题目！\n\n点击“确定”清空当前题目并替换为您导入的题目；\n点击“取消”则将新题目追加到当前题库的末尾。`);
         
@@ -520,12 +544,15 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           shouldOverwrite ? [] : (board.unassigned || [])
         );
 
-        setDraggingItem(null);
-        setDragOverZone(null);
         setTextImportModalOpen(false);
-        setEditorKey(k => k + 1);
-        setLocalQuestions(nextQuestions);
-        setBoard(nextBoard);
+        window.requestAnimationFrame(() => {
+          setDraggingItem(null);
+          setDragOverZone(null);
+          setEditorKey(k => k + 1);
+          setVisibleQuestionCount(Math.min(INITIAL_VISIBLE_QUESTIONS, nextQuestions.length));
+          setLocalQuestions(nextQuestions);
+          setBoard(nextBoard);
+        });
       } else {
         alert('未能识别出任何题目格式。请确保文本采用了如 "1. " 作为题号开头，并指定了 "答案：A"。');
       }
@@ -586,6 +613,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   };
 
   if (loading) return <div className="fixed inset-0 z-[60] bg-white flex items-center justify-center font-bold">加载中...</div>;
+
+  const visibleQuestions = localQuestions.slice(0, visibleQuestionCount);
+  const hasHiddenQuestions = visibleQuestionCount < localQuestions.length;
 
   return (
     <div 
@@ -792,7 +822,7 @@ D. 深圳
                 </div>
               </div>
 
-              {localQuestions.map((q, qIndex) => (
+              {visibleQuestions.map((q, qIndex) => (
                 <div key={q.id} className="bg-white border-2 border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col relative group">
                   <button 
                     onClick={() => deleteQuestion(qIndex)}
@@ -842,7 +872,7 @@ D. 深圳
                     {/* 选项列表 */}
                     <div className="flex-1 p-6 space-y-4">
                       <h3 className="text-sm font-bold text-slate-700 border-b pb-2 mb-4">编辑选项与答案</h3>
-                      {q.options.map((opt, optIndex) => (
+                      {(q.options || []).map((opt, optIndex) => (
                         <div key={optIndex} className="flex items-center gap-3">
                           <input 
                             type="radio" 
@@ -975,6 +1005,15 @@ D. 深圳
                   </div>
                 </div>
               ))}
+
+              {hasHiddenQuestions && (
+                <button
+                  onClick={() => setVisibleQuestionCount(count => Math.min(count + INITIAL_VISIBLE_QUESTIONS, localQuestions.length))}
+                  className="w-full py-3 border-2 border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold rounded-2xl flex items-center justify-center gap-2 transition-colors"
+                >
+                  Show more questions ({visibleQuestionCount}/{localQuestions.length})
+                </button>
+              )}
 
               <button 
                 onClick={addQuestion}
