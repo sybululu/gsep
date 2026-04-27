@@ -59,13 +59,16 @@ service cloud.firestore {
              data.content is string && data.content.size() <= 800000;
     }
 
-    match /images/{imageId} {
+    match /images/{versionId} {
       allow get, list: if true;
-      allow create: if isAdmin() && isValidId(imageId) && isValidImage(incoming());
-      allow update: if isAdmin() && isValidId(imageId) && isValidImage(incoming()) && (
-        incoming().diff(existing()).affectedKeys().hasOnly(['content'])
-      );
-      allow delete: if isAdmin() && isValidId(imageId);
+      match /images/{imageId} {
+        allow get, list: if true;
+        allow create: if isAdmin() && isValidId(imageId) && isValidImage(incoming());
+        allow update: if isAdmin() && isValidId(imageId) && isValidImage(incoming()) && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['content'])
+        );
+        allow delete: if isAdmin() && isValidId(imageId);
+      }
     }
   }
 }
