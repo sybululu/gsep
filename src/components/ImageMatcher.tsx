@@ -1,7 +1,7 @@
 import React, { useState, useEffect, DragEvent, ReactNode } from 'react';
 import { QuizVersion, Question } from '../data';
 import { Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Loader2 } from 'lucide-react';
-import { doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc, getDocs } from 'firebase/firestore';
 import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
@@ -448,24 +448,15 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       }
 
       try {
-        const versionToDelete = versions.find(v => v.id === selectedVersionId);
-        if (versionToDelete && versionToDelete.questions) {
-          // 删除关联的图片
-          const imagesToDelete = new Set<string>();
-          versionToDelete.questions.forEach(q => {
-            if (q.images) q.images.forEach(img => imagesToDelete.add(img));
-            if (q.optionImages) q.optionImages.forEach(img => imagesToDelete.add(img));
-          });
-          
-          if (imagesToDelete.size > 0) {
-            const deleteImagePromises = Array.from(imagesToDelete)
-              .filter(img => !img.startsWith('/') && !img.startsWith('data:') && !PUBLIC_IMAGE_RE.test(img))
-              .map(img => deleteDoc(doc(db, 'images', selectedVersionId, 'images', img)).catch(e => console.error("Failed to delete image: ", e)));
-            await Promise.all(deleteImagePromises);
-          }
-        }
-
+        // 删除题库数据
         await deleteDoc(doc(db, 'quizVersions', selectedVersionId));
+        
+        // 删除题库对应的图片集合
+        const imagesRef = collection(db, 'images', selectedVersionId, 'images');
+        const imagesSnap = await getDocs(imagesRef);
+        const deleteImagePromises = imagesSnap.docs.map(d => deleteDoc(doc(db, 'images', selectedVersionId, 'images', d.id)).catch(e => console.error("Failed to delete image: ", e)));
+        await Promise.all(deleteImagePromises);
+        
         const newVersions = versions.filter(v => v.id !== selectedVersionId);
         setVersions(newVersions);
         if (newVersions.length > 0) {
