@@ -1,0 +1,245 @@
+import { useEffect, useState, type DragEvent } from 'react';
+import { ChevronDown, Download, FileJson, Loader2, Plus, Upload, X } from 'lucide-react';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import type { Question, QuizVersion } from '../data';
+import { db } from '../firebase';
+import { parseTextToQuestions } from '../utils/parseQuestions';
+import { normalizeQuizQuestions } from '../utils/quizValidation';
+import { ensureQuestionBankAdmin } from './questionBank/adminAuth';
+import { ImageLibrary } from './questionBank/ImageLibrary';
+import { QuestionCard } from './questionBank/QuestionCard';
+import { saveQuestionBankToFirestore } from './questionBank/saveQuiz';
+import { handleQuestionImageDragOver, moveQuestionImage, readQuestionImageDrag, startQuestionImageDrag } from './questionBank/dragHelpers';
+import { imageFilesToLibraryItems, isFileDrag } from './questionBank/uploadHelpers';
+import { isCloudImageId } from './questionBank/imageUtils';
+import type { ImageTarget, LibraryImage } from './questionBank/types';
+
+const PAGE_SIZE = 10;
+
+export function QuestionBankManager({ password, initialVersions, onClose }: { password?: string; initialVersions: QuizVersion[]; onClose: () => void }) {
+  const [versions, setVersions] = useState<QuizVersion[]>(initialVersions);
+  const [selectedId, setSelectedId] = useState(initialVersions[0]?.id || '');
+  const [name, setName] = useState('');
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [libraryImages, setLibraryImages] = useState<LibraryImage[]>([]);
+  const [cloudImages, setCloudImages] = useState<Record<string, string>>({});
+  const [textOpen, setTextOpen] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [uploadHover, setUploadHover] = useState(false);
+  const [hoverZone, setHoverZone] = useState('');
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  const localImages = Object.fromEntries(libraryImages.map(image => [image.name, image.content]));
+
+  useEffect(() => {
+    const selected = versions.find(version => version.id === selectedId);
+    if (!selected) return;
+    const nextQuestions = normalizeQuizQuestions(JSON.parse(JSON.stringify(selected.questions || [])));
+    setName(selected.name);
+    setQuestions(nextQuestions);
+    setVisibleCount(Math.min(PAGE_SIZE, nextQuestions.length || PAGE_SIZE));
+  }, [selectedId, versions]);
+
+  useEffect(() => {
+    const ids = new Set<string>();
+    questions.forEach(question => [...question.images, ...question.optionImages].forEach(image => {
+      if (isCloudImageId(image)) ids.add(image);
+    }));
+
+    ids.forEach(async image => {
+      if (cloudImages[image]) return;
+      try {
+        const snap = await getDoc(doc(db, 'images', image));
+        const content = snap.exists() ? snap.data().content : '';
+        if (typeof content === 'string') setCloudImages(prev => ({ ...prev, [image]: content }));
+      } catch (error) {
+        console.warn('Failed to load cloud image', image, error);
+      }
+    });
+  }, [questions, cloudImages]);
+
+  const updateQuestion = (index: number, patch: Partial<Question>) => {
+    setQuestions(prev => normalizeQuizQuestions(prev.map((question, i) => i === index ? { ...question, ...patch } : question)));
+  };
+
+  const updateOption = (questionIndex: number, optionIndex: number, value: string) => {
+    setQuestions(prev => normalizeQuizQuestions(prev.map((question, i) => {
+      if (i !== questionIndex) return question;
+      const options = [...question.options];
+      options[optionIndex] = value;
+      return { ...question, options };
+    })));
+  };
+
+  const addOption = (questionIndex: number) => {
+    setQuestions(prev => normalizeQuizQuestions(prev.map((question, i) => i === questionIndex ? { ...question, options: [...question.options, '新选项'] } : question)));
+  };
+
+  const removeOption = (questionIndex: number, optionIndex: number) => {
+    setQuestions(prev => normalizeQuizQuestions(prev.map((question, i) => i === questionIndex ? {
+      ...question,
+      options: question.options.filter((_, index) => index !== optionIndex),
+      optionImages: question.optionImages.filter((_, index) => index !== optionIndex),
+    } : question)));
+  };
+
+  const addQuestion = () => {
+    setQuestions(prev => [...prev, normalizeQuizQuestions([{ id: `q-${Date.now()}`, type: 'single', text: '新题目', options: ['A', 'B', 'C', 'D'], answer: 0, score: 3, images: [], optionImages: [] }])[0]]);
+    setVisibleCount(count => count + 1);
+  };
+
+  const deleteQuestion = (index: number) => {
+    if (confirm('确定删除这道题吗？')) setQuestions(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const onUploadOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setUploadHover(true);
+  };
+
+  const onUploadDrop = async (event: DragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setUploadHover(false);
+    setLibraryImages(prev => [...prev, ...(await imageFilesToLibraryItems(Array.from(event.dataTransfer.files)))]);
+  };
+
+  const onImageDrop = (event: DragEvent<HTMLElement>, questionId: string, target: ImageTarget) => {
+    const payload = readQuestionImageDrag(event);
+    if (!payload) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setHoverZone('');
+    setQuestions(prev => moveQuestionImage(prev, payload, questionId, target));
+  };
+
+  const removeAssignedImage = (questionId: string, target: ImageTarget, index: number) => {
+    setQuestions(prev => normalizeQuizQuestions(prev.map(question => question.id === questionId ? {
+      ...question,
+      [target]: question[target].filter((_, imageIndex) => imageIndex !== index),
+    } : question)));
+  };
+
+  const createVersion = async () => {
+    const versionName = prompt('请输入新题库名称：');
+    if (!versionName || !(await ensureQuestionBankAdmin(password))) return;
+    const version = { id: `version-${Date.now()}`, name: versionName, questions: [] };
+    await setDoc(doc(db, 'quizVersions', version.id), version);
+    setVersions(prev => [...prev, version]);
+    setSelectedId(version.id);
+  };
+
+  const importTextQuestions = async () => {
+    if (!importText.trim()) return;
+    setImporting(true);
+    try {
+      const parsed = normalizeQuizQuestions(parseTextToQuestions(importText));
+      if (!parsed.length) return alert('未识别到选择题或判断题。');
+      const overwrite = confirm(`识别到 ${parsed.length} 道选择/判断题。确定替换当前题库，取消追加。`);
+      setQuestions(prev => overwrite ? parsed : [...prev, ...parsed]);
+      setVisibleCount(Math.min(PAGE_SIZE, overwrite ? parsed.length : questions.length + parsed.length));
+      setTextOpen(false);
+      setImportText('');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const save = async () => {
+    if (!(await ensureQuestionBankAdmin(password))) return;
+    try {
+      const quiz = await saveQuestionBankToFirestore(selectedId, name, questions, libraryImages);
+      setVersions(prev => prev.map(version => version.id === selectedId ? quiz : version));
+      alert(`同步成功：${quiz.questions.length} 道题，${libraryImages.length} 张图片。`);
+      onClose();
+    } catch (error: any) {
+      alert('保存失败：' + (error?.message || String(error)));
+    }
+  };
+
+  const visibleQuestions = questions.slice(0, visibleCount);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex flex-col bg-[#F1F5F9] notranslate" translate="no">
+      <header className="flex shrink-0 items-center justify-between gap-4 overflow-x-auto border-b bg-white p-4">
+        <div className="flex items-center gap-3">
+          <button onClick={() => ensureQuestionBankAdmin(password)} className="rounded-xl bg-emerald-600 px-3 py-2 font-bold text-white">登录云数据库</button>
+          <select value={selectedId} onChange={event => setSelectedId(event.target.value)} className="rounded border px-2 py-2">
+            {versions.map(version => <option key={version.id} value={version.id}>{version.name}</option>)}
+          </select>
+          <ChevronDown className="h-4 w-4" />
+          <button onClick={createVersion}>新建题库</button>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setTextOpen(true)} className="rounded-xl bg-purple-600 px-3 py-2 font-bold text-white"><FileJson className="inline h-4 w-4" /> 文本导入</button>
+          <button onClick={save} className="rounded-xl bg-blue-600 px-3 py-2 font-bold text-white"><Download className="inline h-4 w-4" /> 同步题库</button>
+          <button onClick={onClose} className="rounded bg-slate-100 p-2"><X /></button>
+        </div>
+      </header>
+
+      {textOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-3xl rounded-3xl bg-white p-5">
+            <h2 className="text-xl font-bold">导入选择/判断题</h2>
+            <textarea value={importText} onChange={event => setImportText(event.target.value)} className="mt-3 h-[45vh] w-full rounded-xl border p-3" />
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={() => setTextOpen(false)}>取消</button>
+              <button onClick={importTextQuestions} disabled={!importText.trim() || importing} className="rounded-xl bg-purple-600 px-4 py-2 text-white">
+                {importing ? <Loader2 className="animate-spin" /> : '解析'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-1 overflow-hidden">
+        <ImageLibrary
+          images={libraryImages}
+          localImages={localImages}
+          cloudImages={cloudImages}
+          isUploadHover={uploadHover}
+          onUploadOver={onUploadOver}
+          onUploadLeave={() => setUploadHover(false)}
+          onUploadDrop={onUploadDrop}
+          onImageDragStart={startQuestionImageDrag}
+          onRemove={index => setLibraryImages(prev => prev.filter((_, i) => i !== index))}
+        />
+        <main className="flex-1 overflow-y-auto p-6">
+          <div className="mb-4 flex justify-between rounded-2xl border bg-white p-4">
+            <input value={name} onChange={event => setName(event.target.value)} className="border-b text-xl font-bold outline-none" />
+            <span>{questions.length} 题</span>
+          </div>
+          <div className="space-y-4">
+            {visibleQuestions.map((question, index) => (
+              <QuestionCard
+                key={question.id}
+                question={question}
+                index={index}
+                localImages={localImages}
+                cloudImages={cloudImages}
+                hoverZone={hoverZone}
+                onUpdate={updateQuestion}
+                onUpdateOption={updateOption}
+                onAddOption={addOption}
+                onRemoveOption={removeOption}
+                onDelete={deleteQuestion}
+                onImageDragStart={startQuestionImageDrag}
+                onImageDragOver={(event, id) => handleQuestionImageDragOver(event, setHoverZone, id)}
+                onImageDrop={onImageDrop}
+                onRemoveImage={removeAssignedImage}
+              />
+            ))}
+          </div>
+          <div className="flex justify-center gap-3 py-8">
+            <button onClick={addQuestion} className="rounded-xl bg-slate-900 px-5 py-3 font-bold text-white"><Plus className="inline h-4 w-4" /> 新增题目</button>
+            {visibleCount < questions.length && <button onClick={() => setVisibleCount(count => Math.min(count + PAGE_SIZE, questions.length))} className="rounded-xl border bg-white px-5 py-3">加载更多</button>}
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
