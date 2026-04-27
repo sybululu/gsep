@@ -3,6 +3,12 @@ import type { Question } from '../components/questionBank/types';
 const normalizeLine = (line: string) =>
   line.replace(/\u00a0/g, ' ').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
 
+// 从章节标题中提取分值，如 "每题 2 分" 或 "每题2分"
+const extractScore = (line: string): number | null => {
+  const match = line.match(/每题\s*(\d+)\s*[分]?/);
+  return match ? parseInt(match[1]) : null;
+};
+
 export const parseTextToQuestions = (text: string): Question[] => {
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
 
@@ -47,6 +53,10 @@ export const parseTextToQuestions = (text: string): Question[] => {
   // 只在单选题或判断题区域内才识别题目
   let inSingleSection = false;
   let inTfSection = false;
+  
+  // 当前章节的分值
+  let currentSingleScore = 2;
+  let currentTfScore = 4;
 
   for (let i = 0; i < filteredLines.length; i++) {
     const line = filteredLines[i];
@@ -55,11 +65,15 @@ export const parseTextToQuestions = (text: string): Question[] => {
     if (/^一/.test(line) && /单选/.test(line)) {
       inSingleSection = true;
       inTfSection = false;
+      const score = extractScore(line);
+      if (score !== null) currentSingleScore = score;
       continue;
     }
     if (/^二/.test(line) && /判断/.test(line)) {
       inSingleSection = false;
       inTfSection = true;
+      const score = extractScore(line);
+      if (score !== null) currentTfScore = score;
       continue;
     }
     // 遇到其他章节标题，重置状态
@@ -95,7 +109,7 @@ export const parseTextToQuestions = (text: string): Question[] => {
         text: qMatch[2],
         options: [],
         answer: 0,
-        score: inTfSection ? 4 : 2,
+        score: inTfSection ? currentTfScore : currentSingleScore,
         images: [],
         optionImages: []
       };
