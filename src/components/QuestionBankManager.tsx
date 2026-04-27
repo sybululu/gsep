@@ -1,8 +1,9 @@
 import { useEffect, useState, useRef, type DragEvent } from 'react';
-import { ChevronDown, Download, FileJson, Loader2, Plus, Upload, X } from 'lucide-react';
-import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
+import { ChevronDown, Download, FileJson, Loader2, Plus, Trash2, Upload, X } from 'lucide-react';
+import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
+import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { db, auth } from '../firebase';
 import type { Question, QuizVersion } from '../data';
-import { db } from '../firebase';
 import { parseTextToQuestions } from '../utils/parseQuestions';
 import { normalizeQuizQuestions } from '../utils/quizValidation';
 import { ensureQuestionBankAdmin } from './questionBank/adminAuth';
@@ -28,6 +29,45 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
   const [importing, setImporting] = useState(false);
   const [importSingleScore, setImportSingleScore] = useState('2');
   const [importTfScore, setImportTfScore] = useState('4');
+  const [googleUser, setGoogleUser] = useState<{ name: string; email: string; photo?: string } | null>(null);
+
+  // 监听登录状态
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setGoogleUser(user ? { name: user.displayName || '用户', email: user.email || '', photo: user.photoURL || undefined } : null);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleCloudLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      console.error(err);
+      alert('登录失败');
+    }
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+  };
+
+  const handleDeleteVersion = async () => {
+    if (!confirm(`确定删除题库 "${name}" 吗？此操作不可撤销！`)) return;
+    if (!(await ensureQuestionBankAdmin(password))) return;
+    try {
+      await deleteDoc(doc(db, 'quizVersions', selectedId));
+      await deleteDoc(doc(db, 'images', selectedId));
+      setVersions(prev => prev.filter(v => v.id !== selectedId));
+      setSelectedId(versions.find(v => v.id !== selectedId)?.id || '');
+      alert('删除成功');
+    } catch (err) {
+      console.error(err);
+      alert('删除失败');
+    }
+  };
   const [uploadHover, setUploadHover] = useState(false);
   const [hoverZone, setHoverZone] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -275,12 +315,25 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     <div className="fixed inset-0 z-[60] flex flex-col bg-[#F1F5F9] notranslate" translate="no">
       <header className="flex shrink-0 items-center justify-between gap-4 overflow-x-auto border-b bg-white p-4">
         <div className="flex items-center gap-3">
-          <button onClick={() => ensureQuestionBankAdmin(password)} className="rounded-xl bg-emerald-600 px-3 py-2 font-bold text-white">登录云数据库</button>
+          {googleUser ? (
+            <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-xl">
+              {googleUser.photo && <img src={googleUser.photo} alt="" className="w-6 h-6 rounded-full" />}
+              <span className="text-sm text-green-700 font-medium">{googleUser.name}</span>
+              <button onClick={handleLogout} className="ml-2 px-2 py-1 bg-red-100 text-red-600 text-xs rounded hover:bg-red-200">退出</button>
+            </div>
+          ) : (
+            <button onClick={handleCloudLogin} className="rounded-xl bg-emerald-600 px-3 py-2 font-bold text-white">登录云数据库</button>
+          )}
           <select value={selectedId} onChange={event => setSelectedId(event.target.value)} className="rounded border px-2 py-2">
             {versions.map(version => <option key={version.id} value={version.id}>{version.name}</option>)}
           </select>
           <ChevronDown className="h-4 w-4" />
-          <button onClick={createVersion}>新建题库</button>
+          <button onClick={createVersion} className="rounded border px-2 py-2 font-bold">新建题库</button>
+          {versions.length > 1 && (
+            <button onClick={handleDeleteVersion} className="rounded bg-red-600 px-3 py-2 font-bold text-white flex items-center gap-1">
+              <Trash2 className="h-4 w-4" /> 删除题库
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setTextOpen(true)} className="rounded-xl bg-purple-600 px-3 py-2 font-bold text-white"><FileJson className="inline h-4 w-4" /> 文本导入</button>
