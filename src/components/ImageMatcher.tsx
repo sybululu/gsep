@@ -3,7 +3,7 @@ import { QuizVersion, Question, QuestionType } from '../data';
 import { Image as ImageIcon, Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Settings, Wand2, Loader2 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { doc, setDoc, deleteDoc } from 'firebase/firestore';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 
@@ -31,6 +31,58 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [textImportModalOpen, setTextImportModalOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importLoading, setImportLoading] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(auth.currentUser?.email || null);
+
+  const toValidFirestoreId = (raw: string, fallbackPrefix = 'img') => {
+    const cleaned = raw
+      .trim()
+      .replace(/\.[a-z0-9]+$/i, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 100);
+    return cleaned || `${fallbackPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  };
+
+  const getFriendlyFirebaseMessage = (err: any) => {
+    const code = err?.code || '';
+    if (code === 'permission-denied') return '权限不足：请检查 Firestore 规则/登录状态。';
+    if (code === 'auth/unauthorized-domain') return '当前域名未加入 Firebase Auth 授权域名，请在 Firebase 控制台添加 Cloudflare 域名。';
+    if (code === 'invalid-argument') return '请求参数无效：请检查题库字段格式或图片 ID。';
+    return err?.message || String(err);
+  };
+
+  const reportFirestoreError = (err: unknown, operationType: OperationType, path: string) => {
+    try {
+      handleFirestoreError(err, operationType, path);
+    } catch {
+      // keep UI alive after logging
+    }
+  };
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setCurrentUserEmail(user?.email || null);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleGoogleLogin = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err: any) {
+      alert(`登录失败：${getFriendlyFirebaseMessage(err)}`);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err: any) {
+      alert(`退出失败：${getFriendlyFirebaseMessage(err)}`);
+    }
+  };
 
   const toValidFirestoreId = (raw: string, fallbackPrefix = 'img') => {
     const cleaned = raw
@@ -260,9 +312,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       setVersions([...versions, newVersion]);
       setSelectedVersionId(newId);
       alert('创建新题库成功！');
-    } catch(err) {
-      alert("创建失败: " + String(err));
-      handleFirestoreError(err, OperationType.CREATE, 'quizVersions');
+    } catch(err: any) {
+      alert("创建失败: " + getFriendlyFirebaseMessage(err));
+      reportFirestoreError(err, OperationType.CREATE, 'quizVersions');
     }
   };
 
@@ -295,9 +347,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           setSelectedVersionId(newVersions[0].id);
         }
         alert('删除成功！关联数据和图片已同步删除。');
-      } catch(err) {
-        alert("删除失败: " + String(err));
-        handleFirestoreError(err, OperationType.DELETE, 'quizVersions');
+      } catch(err: any) {
+        alert("删除失败: " + getFriendlyFirebaseMessage(err));
+        reportFirestoreError(err, OperationType.DELETE, 'quizVersions');
       }
     }
   };
@@ -621,8 +673,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       onClose();
     } catch (err: any) {
       console.error(err);
-      handleFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
-      alert('保存出错: ' + err.message);
+      reportFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
+      alert('保存出错: ' + getFriendlyFirebaseMessage(err));
     }
   };
 
@@ -679,6 +731,15 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           </div>
         </div>
         <div className="flex items-center gap-3 px-4">
+          {currentUserEmail ? (
+            <button onClick={handleLogout} className="px-3 py-2 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded-xl text-xs hover:bg-emerald-100 transition-colors">
+              已登录：{currentUserEmail}（退出）
+            </button>
+          ) : (
+            <button onClick={handleGoogleLogin} className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-700 font-bold rounded-xl text-xs hover:bg-amber-100 transition-colors">
+              Google 登录
+            </button>
+          )}
           <button onClick={() => setTextImportModalOpen(true)} className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-bold rounded-xl flex items-center gap-2 hover:opacity-90 transition-opacity tooltip" title="粘贴文章/文本，自动解析为题目">
             <FileJson className="w-4 h-4"/> "文本导入"
           </button>
