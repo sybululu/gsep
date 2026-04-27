@@ -34,6 +34,13 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
 
   const localImages = Object.fromEntries(libraryImages.map(image => [image.name, image.content]));
 
+  // 拖拽到题目后保留图片内容（不从 localImages 中移除）
+  const usedImages = Object.fromEntries(
+    questions.flatMap(q => [...q.images, ...q.optionImages])
+      .filter(img => localImages[img] || cloudImages[img])
+      .map(img => [img, localImages[img] || cloudImages[img]])
+  );
+
   useEffect(() => {
     const selected = versions.find(version => version.id === selectedId);
     if (!selected) return;
@@ -331,7 +338,7 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
                 key={question.id}
                 question={question}
                 index={index}
-                localImages={localImages}
+                localImages={usedImages}
                 cloudImages={cloudImages}
                 hoverZone={hoverZone}
                 onUpdate={updateQuestion}
