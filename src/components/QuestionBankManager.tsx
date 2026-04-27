@@ -193,11 +193,7 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     event.stopPropagation();
     setHoverZone('');
     
-    // 从 library 拖来的图片，使用后从图库移除
-    if (payload.from === 'library') {
-      setLibraryImages(prev => prev.filter(img => img.name !== payload.image));
-    }
-    
+    // 拖拽图片后更新题目
     setQuestions(prev => moveQuestionImage(prev, payload, questionId, target));
   };
 
