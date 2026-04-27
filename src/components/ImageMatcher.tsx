@@ -2,14 +2,16 @@ import React, { useState, useEffect, DragEvent } from 'react';
 import { QuizVersion, Question, QuestionType } from '../data';
 import { Image as ImageIcon, Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Settings, Wand2, Loader2 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
-import { doc, setDoc, deleteDoc } from 'firebase/firestore';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
+import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
+import { toValidFirestoreId } from '../utils/firestoreId';
 
 interface Item {
   id: string; // The image url or local base64
-  name: string; // display name
+  name: string; // firestore image document id
+  displayName?: string; // ui display name
   url: string; // src
 }
 
@@ -30,34 +32,99 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [textImportModalOpen, setTextImportModalOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importLoading, setImportLoading] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(auth.currentUser?.email || null);
+
+  const ensureBoardSlotsForQuestions = (questions: Question[], prevBoard: Board) => {
+    const next: Board = { unassigned: [...(prevBoard.unassigned || [])] };
+    questions.forEach((q) => {
+      next[`${q.id}-body`] = prevBoard[`${q.id}-body`] || [];
+      next[`${q.id}-options`] = prevBoard[`${q.id}-options`] || [];
+    });
+    return next;
+  };
+
+  const getFriendlyFirebaseMessage = (err: any) => {
+    const code = err?.code || '';
+    if (code === 'permission-denied') return '权限不足：请检查 Firestore 规则/登录状态。';
+    if (code === 'auth/unauthorized-domain') return '当前域名未加入 Firebase Auth 授权域名，请在 Firebase 控制台添加 Cloudflare 域名。';
+    if (code === 'invalid-argument') return '请求参数无效：请检查题库字段格式或图片 ID。';
+    return err?.message || String(err);
+  };
+
+  const reportFirestoreError = (err: unknown, operationType: OperationType, path: string) => {
+    try {
+      handleFirestoreError(err, operationType, path);
+    } catch {
+      // keep UI alive after logging
+    }
+  };
+
+  const runSyncPreflightCheck = () => {
+    const errs: string[] = [];
+
+    if (!selectedVersionId || !/^[a-zA-Z0-9_-]{1,128}$/.test(selectedVersionId)) {
+      errs.push('题库 ID 非法（仅支持字母/数字/下划线/中划线，且长度 <= 128）。');
+    }
+    if (!versionName || versionName.length > 100) {
+      errs.push('题库名称不能为空且长度需 <= 100。');
+    }
+    if (localQuestions.length > 50) {
+      errs.push('题目数量超限（最多 50 题）。');
+    }
+
+    localQuestions.forEach((q, idx) => {
+      const label = `第 ${idx + 1} 题`;
+      if (!q.id || q.id.length > 128 || !/^[a-zA-Z0-9_-]+$/.test(q.id)) errs.push(`${label}：题目 ID 缺失、超长或包含非法字符。`);
+      if (!q.text || q.text.length > 2000) errs.push(`${label}：题干为空或超过 2000 字。`);
+      const optionCount = Array.isArray(q.options) ? q.options.length : 0;
+      if (optionCount === 0 || optionCount > 10) errs.push(`${label}：选项数量需在 1~10。`);
+      if (typeof q.answer !== 'number' || q.answer < 0 || q.answer >= optionCount) errs.push(`${label}：答案索引越界。`);
+      if (typeof q.score !== 'number') errs.push(`${label}：分值必须是数字。`);
+    });
+
+    const dataUrlImages = (Object.values(board).flat() as Item[]).filter(i => i.url.startsWith('data:image/'));
+    dataUrlImages.forEach((img) => {
+      const id = toValidFirestoreId(img.name || img.displayName || 'img');
+      if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id)) {
+        errs.push(`图片 "${img.displayName || img.name}" 的存储 ID 不合法。`);
+      }
+    });
+
+    return errs;
+  };
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setCurrentUserEmail(user?.email || null);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleGoogleLogin = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err: any) {
+      alert(`登录失败：${getFriendlyFirebaseMessage(err)}`);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err: any) {
+      alert(`退出失败：${getFriendlyFirebaseMessage(err)}`);
+    }
+  };
 
   useEffect(() => {
     if (!selectedVersionId) return;
     const currentVersion = versions.find(v => v.id === selectedVersionId);
     if (!currentVersion) return;
 
+    setLoading(true);
     setVersionName(currentVersion.name);
     setLocalQuestions(JSON.parse(JSON.stringify(currentVersion.questions)));
-    
-    const allKnownImages = new Set<string>();
-    const initialBoard: Board = { unassigned: board.unassigned || [] }; 
-    
-    currentVersion.questions.forEach(q => {
-      const imgs = (q.images || []).filter(Boolean);
-      const optImgs = (q.optionImages || []).filter(Boolean);
-      initialBoard[`${q.id}-body`] = imgs.map((img, i) => ({
-        id: `${q.id}-body-img-${i}-${img}`,
-        name: img,
-        url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
-      }));
-      initialBoard[`${q.id}-options`] = optImgs.map((img, i) => ({
-        id: `${q.id}-opt-img-${i}-${img}`,
-        name: img,
-        url: img.startsWith('blob:') || img.startsWith('data:') ? img : `/${img}`
-      }));
-      imgs.forEach(i => allKnownImages.add(i));
-      optImgs.forEach(i => allKnownImages.add(i));
-    });
 
     const publicImgs = [
       "0401f5f5-ae0d-4bd5-a594-20986816f754.png", "0f4c5edd-24ad-46db-ac17-42c961f7fc80.png",
@@ -82,18 +149,80 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       "f43fff35-c6b9-43cb-96bf-ac645fceaeee.png", "f756fef5-05fa-42e0-9632-4117e89f819c.png",
       "fcf0662e-5518-47f1-b5fa-f14345eb435a.png", "fe7da822-77de-4922-af1b-aac6ef810904.png"
     ];
+    const publicSet = new Set(publicImgs);
+    const allKnownImages = new Set<string>();
+    const initialBoard: Board = { unassigned: board.unassigned || [] };
+    let cancelled = false;
+    const imageContentCache = new Map<string, string>();
 
-    const currentUnassigned = initialBoard.unassigned.filter(i => i.id.startsWith('local-'));
-    initialBoard.unassigned = [...currentUnassigned];
+    const resolveImageUrl = async (img: string) => {
+      if (img.startsWith('blob:') || img.startsWith('data:')) return img;
+      if (publicSet.has(img)) return `/${img}`;
+      if (imageContentCache.has(img)) return imageContentCache.get(img)!;
 
-    publicImgs.forEach(img => {
-      if (!allKnownImages.has(img)) {
-        initialBoard.unassigned.push({ id: `public-${img}`, name: img, url: `/${img}` });
+      try {
+        const snap = await getDoc(doc(db, 'images', img));
+        if (snap.exists()) {
+          const content = snap.data()?.content;
+          if (typeof content === 'string' && content.length > 0) {
+            imageContentCache.set(img, content);
+            return content;
+          }
+        }
+      } catch (err) {
+        console.warn('Image url resolve failed:', img, err);
       }
-    });
+      const fallbackUrl = `/${img}`;
+      imageContentCache.set(img, fallbackUrl);
+      return fallbackUrl;
+    };
 
-    setBoard(initialBoard);
-    setLoading(false);
+    const hydrateBoard = async () => {
+      for (const q of currentVersion.questions) {
+        const imgs = (q.images || []).filter(Boolean);
+        const optImgs = (q.optionImages || []).filter(Boolean);
+
+        initialBoard[`${q.id}-body`] = await Promise.all(
+          imgs.map(async (img, i) => ({
+            id: `${q.id}-body-img-${i}-${img}`,
+            name: img,
+            displayName: img,
+            url: await resolveImageUrl(img),
+          }))
+        );
+
+        initialBoard[`${q.id}-options`] = await Promise.all(
+          optImgs.map(async (img, i) => ({
+            id: `${q.id}-opt-img-${i}-${img}`,
+            name: img,
+            displayName: img,
+            url: await resolveImageUrl(img),
+          }))
+        );
+
+        imgs.forEach(i => allKnownImages.add(i));
+        optImgs.forEach(i => allKnownImages.add(i));
+      }
+
+      const currentUnassigned = initialBoard.unassigned.filter(i => i.id.startsWith('local-'));
+      initialBoard.unassigned = [...currentUnassigned];
+
+      publicImgs.forEach(img => {
+        if (!allKnownImages.has(img)) {
+          initialBoard.unassigned.push({ id: `public-${img}`, name: img, displayName: img, url: `/${img}` });
+        }
+      });
+
+      if (!cancelled) {
+        setBoard(initialBoard);
+        setLoading(false);
+      }
+    };
+
+    hydrateBoard();
+    return () => {
+      cancelled = true;
+    };
   }, [selectedVersionId, versions]);
 
   const onDragEnd = (result: DropResult) => {
@@ -146,7 +275,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     setDragOverlay(false);
     
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const files = Array.from(e.dataTransfer.files).filter((f: any) => f.type.startsWith('image/'));
+      const files = Array.from(e.dataTransfer.files as FileList).filter((f) => f.type.startsWith('image/'));
       if (files.length === 0) return;
 
       const newItems: Item[] = await Promise.all(files.map(f => {
@@ -156,7 +285,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
             const result = e.target?.result as string;
             resolve({
               id: `local-${Date.now()}-${Math.random()}`,
-              name: f.name,
+              name: toValidFirestoreId(`${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${f.name}`),
+              displayName: f.name,
               url: result
             });
           };
@@ -211,17 +341,30 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
 
   const addQuestion = () => {
     const newId = Date.now().toString();
-    setLocalQuestions([
-      ...localQuestions, 
+    const nextQuestions = [
+      ...localQuestions,
       { id: newId, type: 'single', text: '新题目', options: ['选项A', '选项B', '选项C', '选项D'], answer: 0, score: 2 }
-    ]);
+    ];
+    setLocalQuestions(nextQuestions);
+    setBoard(prev => ensureBoardSlotsForQuestions(nextQuestions, prev));
   };
 
   const deleteQuestion = (index: number) => {
     if (window.confirm('确定要删除这道题吗？')) {
       const updated = [...localQuestions];
-      updated.splice(index, 1);
+      const removed = updated.splice(index, 1)[0];
       setLocalQuestions(updated);
+      if (removed?.id) {
+        setBoard(prev => {
+          const bodyKey = `${removed.id}-body`;
+          const optionKey = `${removed.id}-options`;
+          const recycled = [...(prev.unassigned || []), ...(prev[bodyKey] || []), ...(prev[optionKey] || [])];
+          const next: Board = { ...prev, unassigned: recycled };
+          delete next[bodyKey];
+          delete next[optionKey];
+          return ensureBoardSlotsForQuestions(updated, next);
+        });
+      }
     }
   };
 
@@ -245,9 +388,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       setVersions([...versions, newVersion]);
       setSelectedVersionId(newId);
       alert('创建新题库成功！');
-    } catch(err) {
-      alert("创建失败: " + String(err));
-      handleFirestoreError(err, OperationType.CREATE, 'quizVersions');
+    } catch(err: any) {
+      alert("创建失败: " + getFriendlyFirebaseMessage(err));
+      reportFirestoreError(err, OperationType.CREATE, 'quizVersions');
     }
   };
 
@@ -280,9 +423,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           setSelectedVersionId(newVersions[0].id);
         }
         alert('删除成功！关联数据和图片已同步删除。');
-      } catch(err) {
-        alert("删除失败: " + String(err));
-        handleFirestoreError(err, OperationType.DELETE, 'quizVersions');
+      } catch(err: any) {
+        alert("删除失败: " + getFriendlyFirebaseMessage(err));
+        reportFirestoreError(err, OperationType.DELETE, 'quizVersions');
       }
     }
   };
@@ -301,11 +444,15 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           const parsed = JSON.parse(content);
           
           if (parsed.questions && Array.isArray(parsed.questions)) {
-            setLocalQuestions(parsed.questions);
+            const nextQuestions = parsed.questions as Question[];
+            setLocalQuestions(nextQuestions);
+            setBoard(prev => ensureBoardSlotsForQuestions(nextQuestions, prev));
             if (parsed.name) setVersionName(parsed.name);
             alert('导入成功！请确认无误后点击同步数据保存。');
           } else if (Array.isArray(parsed)) {
-            setLocalQuestions(parsed);
+            const nextQuestions = parsed as Question[];
+            setLocalQuestions(nextQuestions);
+            setBoard(prev => ensureBoardSlotsForQuestions(nextQuestions, prev));
             alert('导入成功！请确认无误后点击同步数据保存。');
           } else {
             alert('JSON 格式不正确：找不到题目列表。');
@@ -567,13 +714,22 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       return;
     }
 
+    const preflightErrors = runSyncPreflightCheck();
+    if (preflightErrors.length > 0) {
+      alert(`同步前检查未通过：\n- ${preflightErrors.join('\n- ')}`);
+      return;
+    }
+
     try {
       // 收集并上传新图片至 Firebase
       const uploads: Promise<void>[] = [];
+      const uploadedNameMap = new Map<string, string>();
       Object.values(board).forEach((list: any) => {
         list.forEach(item => {
           if (item.url.startsWith('data:image/')) {
-            const docRef = doc(db, 'images', item.name); 
+            const safeName = toValidFirestoreId(item.name || item.displayName || 'img');
+            uploadedNameMap.set(item.name, safeName);
+            const docRef = doc(db, 'images', safeName);
             uploads.push(setDoc(docRef, { content: item.url }));
           }
         });
@@ -591,8 +747,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         questions: localQuestions.map(q => {
           return {
             ...q,
-            images: (board[`${q.id}-body`] || []).map(i => i.name),
-            optionImages: (board[`${q.id}-options`] || []).map(i => i.name)
+            images: (board[`${q.id}-body`] || []).map(i => uploadedNameMap.get(i.name) || i.name),
+            optionImages: (board[`${q.id}-options`] || []).map(i => uploadedNameMap.get(i.name) || i.name)
           };
         })
       };
@@ -603,9 +759,18 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       onClose();
     } catch (err: any) {
       console.error(err);
-      handleFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
-      alert('保存出错: ' + err.message);
+      reportFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
+      alert('保存出错: ' + getFriendlyFirebaseMessage(err));
     }
+  };
+
+  const handleRunPreflightCheck = () => {
+    const errors = runSyncPreflightCheck();
+    if (errors.length === 0) {
+      alert('检查通过：题库结构、题目字段和图片 ID 均符合当前同步约束。');
+      return;
+    }
+    alert(`检查发现 ${errors.length} 个问题：\n- ${errors.join('\n- ')}`);
   };
 
   if (loading) return <div className="fixed inset-0 z-[60] bg-white flex items-center justify-center font-bold">加载中...</div>;
@@ -661,6 +826,15 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           </div>
         </div>
         <div className="flex items-center gap-3 px-4">
+          {currentUserEmail ? (
+            <button onClick={handleLogout} className="px-3 py-2 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded-xl text-xs hover:bg-emerald-100 transition-colors">
+              已登录：{currentUserEmail}（退出）
+            </button>
+          ) : (
+            <button onClick={handleGoogleLogin} className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-700 font-bold rounded-xl text-xs hover:bg-amber-100 transition-colors">
+              Google 登录
+            </button>
+          )}
           <button onClick={() => setTextImportModalOpen(true)} className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-bold rounded-xl flex items-center gap-2 hover:opacity-90 transition-opacity tooltip" title="粘贴文章/文本，自动解析为题目">
             <FileJson className="w-4 h-4"/> "文本导入"
           </button>
@@ -669,6 +843,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           </button>
           <button onClick={handleExportJson} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl flex items-center gap-2 hover:bg-slate-50 transition-colors tooltip" title="导出当前题库为 JSON 文件">
             <FileJson className="w-4 h-4"/> 导出 JSON
+          </button>
+          <button onClick={handleRunPreflightCheck} className="px-3 py-2 bg-white border border-emerald-200 text-emerald-700 font-bold rounded-xl flex items-center gap-2 hover:bg-emerald-50 transition-colors tooltip" title="检查当前题库是否满足同步约束">
+            <Settings className="w-4 h-4"/> 运行检查
           </button>
           <button onClick={saveDataAndFiles} className="px-4 py-2 bg-blue-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-blue-700 active:scale-95 transition-transform"><Download className="w-4 h-4"/> 部署并同步数据</button>
           <button onClick={onClose} className="w-10 h-10 bg-slate-100 flex items-center justify-center rounded-xl hover:bg-slate-200"><X className="w-5 h-5"/></button>
@@ -764,7 +941,8 @@ D. 深圳
                     className="grid grid-cols-2 gap-3 min-h-full"
                   >
                     {(board.unassigned || []).map((item, index) => (
-                      <Draggable key={item.id} draggableId={item.id} index={index}>
+                      <React.Fragment key={item.id}>
+                      <Draggable draggableId={item.id} index={index}>
                         {(provided, snapshot) => (
                           <div
                             ref={provided.innerRef}
@@ -775,7 +953,7 @@ D. 深圳
                           >
                             <img src={item.url} alt="" className="max-w-full max-h-full object-contain p-2 pointer-events-none" />
                             <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-[10px] p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity">
-                              {item.name}
+                              {item.displayName || item.name}
                             </div>
                             <button
                               onClick={(e) => { e.stopPropagation(); removeItem('unassigned', index); }}
@@ -786,6 +964,7 @@ D. 深圳
                           </div>
                         )}
                       </Draggable>
+                      </React.Fragment>
                     ))}
                     {provided.placeholder}
                   </div>
@@ -910,7 +1089,8 @@ D. 深圳
                                  className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
                                >
                                 {board[`${q.id}-body`]?.map((item, index) => (
-                                  <Draggable key={item.id} draggableId={item.id} index={index}>
+                                  <React.Fragment key={item.id}>
+                                  <Draggable draggableId={item.id} index={index}>
                                     {(provided, snapshot) => (
                                       <div
                                         ref={provided.innerRef}
@@ -929,6 +1109,7 @@ D. 深圳
                                       </div>
                                     )}
                                   </Draggable>
+                                  </React.Fragment>
                                 ))}
                                 {provided.placeholder}
                               </div>
@@ -955,7 +1136,8 @@ D. 深圳
                                     className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 min-h-[80px]"
                                   >
                                   {board[`${q.id}-options`]?.map((item, index) => (
-                                    <Draggable key={item.id} draggableId={item.id} index={index}>
+                                    <React.Fragment key={item.id}>
+                                    <Draggable draggableId={item.id} index={index}>
                                       {(provided, snapshot) => {
                                         const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
                                         const letter = letters[index] || (index+1);
@@ -981,6 +1163,7 @@ D. 深圳
                                         );
                                       }}
                                     </Draggable>
+                                    </React.Fragment>
                                   ))}
                                   {provided.placeholder}
                                   </div>
