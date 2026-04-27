@@ -27,6 +27,8 @@ const ANSWER_HEADER_RE = /^(?:\u53c2\u8003\u7b54\u6848|\u7b54\u6848|\u7b54\u6848
 const INLINE_ANSWER_RE = /(?:\u53c2\u8003\u7b54\u6848|\u7b54\u6848)[:\uff1a\s]*([A-Fa-f]|\u5bf9|\u9519|\u6b63\u786e|\u9519\u8bef|\u6b63|\u8bef|[xX]|\u2713|\u2714|\u221a|\u00d7)/;
 const RANGE_ANSWER_RE = /^(\d+)\s*[-~\u2013\u2014]\s*(\d+)\s*[:\uff1a]?\s*([A-Fa-f\u5bf9\u9519\u6b63\u8befxX\u2713\u2714\u221a\u00d7\s,\uff0c\u3001]+)/;
 const NUMBERED_ANSWER_RE = /^(\d+)\s*[.\u3001:\uff1a)]?\s*([A-Fa-f]|\u5bf9|\u9519|\u6b63\u786e|\u9519\u8bef|\u6b63|\u8bef|[xX]|\u2713|\u2714|\u221a|\u00d7)/;
+const ANSWER_TABLE_QUESTION_LABEL = '\u9898\u53f7';
+const ANSWER_LABEL = '\u7b54\u6848';
 
 const normalizeLine = (line: string) =>
   line
@@ -58,6 +60,143 @@ const parseAnswerToken = (raw: string): ParsedAnswer | null => {
 const stripInlineAnswer = (text: string) => text.replace(INLINE_ANSWER_RE, '').trim();
 
 const makeQuestionId = (qNum: number, index: number) => `q-${Date.now()}-${index}-${qNum}`;
+
+const isQuestionNumberToken = (line: string) => /^\d{1,2}$/.test(line);
+
+const isQuestionStart = (lines: string[], index: number) =>
+  isQuestionNumberToken(lines[index]) && /^[.\u3001\uff0c,]/.test(lines[index + 1] || '');
+
+const isOptionStart = (lines: string[], index: number) =>
+  /^[A-F]$/i.test(lines[index]) && /^[.\u3001:\uff1a\uff0c,]/.test(lines[index + 1] || '');
+
+const appendFragment = (base: string, next: string) => {
+  if (!base) return next;
+  if (/^[,.;:!?，。；：！？、）)]/.test(next)) return `${base}${next}`;
+  if (/[（(]$/.test(base)) return `${base}${next}`;
+  if (/[A-Za-z0-9]$/.test(base) && /^[A-Za-z0-9]/.test(next)) return `${base} ${next}`;
+  return `${base}${next}`;
+};
+
+const extractAnswerTable = (lines: string[]) => {
+  const consumed = new Set<number>();
+  const answerLines: string[] = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i] !== ANSWER_TABLE_QUESTION_LABEL) continue;
+
+    const questionNumbers: number[] = [];
+    let cursor = i + 1;
+    while (cursor < lines.length && /^\d{1,2}$/.test(lines[cursor])) {
+      questionNumbers.push(Number(lines[cursor]));
+      cursor += 1;
+    }
+
+    if (questionNumbers.length === 0 || lines[cursor] !== ANSWER_LABEL) continue;
+
+    const tokens: string[] = [];
+    let answerCursor = cursor + 1;
+    while (answerCursor < lines.length && tokens.length < questionNumbers.length) {
+      const parsed = parseAnswerToken(lines[answerCursor]);
+      if (!parsed) break;
+      tokens.push(lines[answerCursor]);
+      answerCursor += 1;
+    }
+
+    if (tokens.length === 0) continue;
+
+    for (let j = i; j < answerCursor; j += 1) consumed.add(j);
+    tokens.forEach((token, index) => {
+      answerLines.push(`${questionNumbers[index]} ${token}`);
+    });
+    break;
+  }
+
+  return {
+    lines: lines.filter((_, index) => !consumed.has(index)),
+    answerLines,
+  };
+};
+
+const stitchFragmentedLines = (sourceLines: string[]) => {
+  const shortLineCount = sourceLines.filter(line => line.length <= 3).length;
+  if (sourceLines.length < 20 || shortLineCount / sourceLines.length < 0.35) {
+    return sourceLines;
+  }
+
+  const { lines, answerLines } = extractAnswerTable(sourceLines);
+  const stitched: string[] = [];
+  let current = '';
+
+  const flush = () => {
+    const value = current.trim();
+    if (value) stitched.push(value);
+    current = '';
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line) continue;
+
+    if (isQuestionStart(lines, i)) {
+      flush();
+      current = `${line}${lines[i + 1]}`;
+      i += 1;
+      continue;
+    }
+
+    if (isOptionStart(lines, i)) {
+      flush();
+      current = `${line}${lines[i + 1]}`;
+      i += 1;
+      continue;
+    }
+
+    if (ANSWER_HEADER_RE.test(line)) {
+      flush();
+      stitched.push(line);
+      continue;
+    }
+
+    if (!current) {
+      continue;
+    }
+
+    current = appendFragment(current, line);
+  }
+
+  flush();
+
+  if (answerLines.length > 0) {
+    stitched.push(ANSWER_LABEL, ...answerLines);
+  }
+
+  return stitched;
+};
+
+const stripXmlFragments = (value: string) =>
+  value
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;[^&]*&gt;/g, '');
+
+const compactFragmentedText = (sourceLines: string[]) => {
+  const { lines, answerLines } = extractAnswerTable(sourceLines.map(stripXmlFragments));
+  const compact = lines
+    .filter(Boolean)
+    .join('')
+    .replace(/\s+/g, ' ')
+    .replace(/([A-F])([.\u3001:\uff1a\uff0c,])/g, '\n$1$2')
+    .replace(/(^|[^0-9])(\d{1,2})([.\u3001])(?=\S)/g, '$1\n$2$3')
+    .replace(/(?:\u53c2\u8003\u7b54\u6848|\u7b54\u6848)(?=\S)/g, '\n$& ')
+    .split(/\n+/)
+    .map(normalizeLine)
+    .filter(Boolean);
+
+  if (answerLines.length > 0) {
+    compact.push(ANSWER_LABEL, ...answerLines);
+  }
+
+  return compact;
+};
 
 const applyAnswer = (question: DraftQuestion, answer: ParsedAnswer) => {
   question.answer = Math.max(0, Math.min(answer.answer, question.options.length - 1));
@@ -151,11 +290,11 @@ const parseAnswerLines = (lines: string[]) => {
   return answers;
 };
 
-export const parseTextToQuestions = (text: string): Question[] => {
-  const lines = text.split(/\r?\n/).map(normalizeLine);
+const parseLinesToQuestions = (lines: string[]): Question[] => {
   const answersByNumber = parseAnswerLines(lines);
   const questions: DraftQuestion[] = [];
   let current: DraftQuestion | null = null;
+  let lastOptionIndex = -1;
 
   const pushCurrent = () => {
     if (current && current.text.trim()) {
@@ -188,6 +327,7 @@ export const parseTextToQuestions = (text: string): Question[] => {
         images: [],
         optionImages: [],
       };
+      lastOptionIndex = -1;
 
       if (parsedInlineAnswer) applyAnswer(current, parsedInlineAnswer);
       continue;
@@ -203,6 +343,7 @@ export const parseTextToQuestions = (text: string): Question[] => {
         current.options.push('');
       }
       current.options[optionIndex] = optionText || optionMatch[1].toUpperCase();
+      lastOptionIndex = optionIndex;
 
       const inlineAnswer = line.match(INLINE_ANSWER_RE);
       const parsedInlineAnswer = inlineAnswer ? parseAnswerToken(inlineAnswer[1]) : null;
@@ -219,9 +360,24 @@ export const parseTextToQuestions = (text: string): Question[] => {
       continue;
     }
 
-    current.text = `${current.text}\n${line}`;
+    if (lastOptionIndex >= 0 && current.options[lastOptionIndex] !== undefined) {
+      current.options[lastOptionIndex] = appendFragment(current.options[lastOptionIndex], line);
+    } else {
+      current.text = `${current.text}\n${line}`;
+    }
   }
 
   pushCurrent();
   return questions.map(finalizeQuestion);
+};
+
+export const parseTextToQuestions = (text: string): Question[] => {
+  const sourceLines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  const stitched = stitchFragmentedLines(sourceLines);
+  const parsed = parseLinesToQuestions(stitched);
+  if (parsed.length >= 5 || sourceLines.length < 20) return parsed;
+
+  const compact = compactFragmentedText(sourceLines);
+  const compactParsed = parseLinesToQuestions(compact);
+  return compactParsed.length > parsed.length ? compactParsed : parsed;
 };

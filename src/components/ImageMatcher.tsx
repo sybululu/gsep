@@ -3,12 +3,13 @@ import { QuizVersion, Question } from '../data';
 import { Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Loader2 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { doc, setDoc, deleteDoc } from 'firebase/firestore';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 import { parseTextToQuestions as parseQuestionText } from '../utils/parseQuestions';
 
 const SafeDraggable = Draggable as React.ComponentType<any>;
+const SafeDragDropContext = DragDropContext as React.ComponentType<any>;
 
 interface Item {
   id: string; // The image url or local base64
@@ -21,6 +22,7 @@ interface Board {
 }
 
 const ADMIN_PASSWORD = '5834';
+const ADMIN_EMAIL = 'candiescot@gmail.com';
 const MAX_FIRESTORE_IMAGE_BYTES = 560_000;
 const MAX_FIRESTORE_IMAGE_LABEL = '550KB';
 const PUBLIC_IMAGE_RE = /^[\w-]+\.(png|jpe?g|gif|webp|svg)$/i;
@@ -50,6 +52,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [textImportModalOpen, setTextImportModalOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importLoading, setImportLoading] = useState(false);
+  const [dndVersion, setDndVersion] = useState(0);
 
   useEffect(() => {
     if (!selectedVersionId) return;
@@ -261,19 +264,31 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       return false;
     }
 
-    if (auth.currentUser) {
+    if (auth.currentUser?.email === ADMIN_EMAIL) {
       return true;
     }
 
     const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
     try {
+      if (auth.currentUser && auth.currentUser.email !== ADMIN_EMAIL) {
+        await signOut(auth);
+      }
       await signInWithPopup(auth, provider);
+      if (auth.currentUser?.email !== ADMIN_EMAIL) {
+        alert(`Please sign in to Firebase with ${ADMIN_EMAIL}. The current Google account cannot write to the cloud database.`);
+        return false;
+      }
       return true;
     } catch (err) {
       alert('需要登录管理员 Google 账号后才能同步题库。');
       console.error(err);
       return false;
     }
+  };
+
+  const handleCloudLogin = async () => {
+    await ensureAdminSignedIn();
   };
 
   const createVersion = async () => {
@@ -402,6 +417,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       if (questions && questions.length > 0) {
         const shouldOverwrite = window.confirm(`成功提取出 ${questions.length} 道题目！\n\n点击“确定”清空当前题目并替换为您导入的题目；\n点击“取消”则将新题目追加到当前题库的末尾。`);
         
+        const nextQuestions = shouldOverwrite ? questions : [...localQuestions, ...questions];
+
         setBoard(prev => {
           const pb = shouldOverwrite ? { unassigned: [] } : { ...prev };
           questions.forEach(q => {
@@ -411,15 +428,8 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           return pb;
         });
         
-        if (shouldOverwrite) {
-            setLocalQuestions(questions);
-        } else {
-            setLocalQuestions([...localQuestions, ...questions]);
-        }
-        
-        // Let's actually save right away so they don't lose it if they exit
-        // We will call saveDataAndFiles logic later, but for now we updated state.
-        
+        setLocalQuestions(nextQuestions);
+        setDndVersion(prev => prev + 1);
         setTextImportModalOpen(false);
       } else {
         alert('未能识别出任何题目格式。请确保文本采用了如 "1. " 作为题号开头，并指定了 "答案：A"。');
@@ -501,6 +511,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       {/* Header */}
       <div className="shrink-0 bg-white p-4 border-b-2 border-slate-200 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-3 px-4">
+          <button onClick={handleCloudLogin} className="px-3 py-2 bg-emerald-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-emerald-700 transition-colors tooltip" title="Firebase Google login for cloud database write permission">
+            登录云数据库
+          </button>
           <Edit3 className="w-8 h-8 text-[#FFD600]" />
           <div>
             <h1 className="text-xl font-bold font-sans">题库管理面板</h1>
@@ -617,7 +630,7 @@ D. 深圳
       )}
 
       {/* Body: Drag Drop Context */}
-      <DragDropContext onDragEnd={onDragEnd}>
+      <SafeDragDropContext key={dndVersion} onDragEnd={onDragEnd}>
         <div className="flex-1 flex overflow-hidden">
           
           {/* 左侧：图库 */}
@@ -877,7 +890,7 @@ D. 深圳
           </div>
           
         </div>
-      </DragDropContext>
+      </SafeDragDropContext>
     </div>
   );
 };
