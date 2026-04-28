@@ -89,12 +89,13 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
   
   // 用于存储已从图库移除但仍在题目中使用的图片内容
   const usedImagesRef = useRef<Record<string, string>>({});
+  const [usedImagesState, setUsedImagesState] = useState<Record<string, string>>({});
 
   const localImages = Object.fromEntries(libraryImages.map(image => [image.name, image.content]));
 
   // 收集所有使用的图片内容（包括云端和本地/已从图库移除的）
   const usedImages = {
-    ...usedImagesRef.current,
+    ...usedImagesState,
     ...localImages,
     ...cloudImages
   };
@@ -202,9 +203,13 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
   // 处理图片拖回图片库
   const onLibraryImageDrop = (event: DragEvent<HTMLDivElement>) => {
     const payload = readQuestionImageDrag(event);
-    if (!payload) return;
+    if (!payload) {
+      setUploadHover(false);
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
+    setUploadHover(false);
     
     // 只有从题目区域拖来的图片才能拖回图片库
     if (payload.from === 'library') return;
@@ -254,8 +259,9 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     if (payload.from === 'library') {
       const imageContent = libraryImages.find(img => img.name === payload.image)?.content;
       if (imageContent) {
-        // 同时更新 usedImagesRef，保留图片内容
+        // 同时更新 usedImagesRef 和 state，保留图片内容
         usedImagesRef.current = { ...usedImagesRef.current, [payload.image]: imageContent };
+        setUsedImagesState(prev => ({ ...prev, [payload.image]: imageContent }));
       }
       setLibraryImages(prev => prev.filter(img => img.name !== payload.image));
     }
