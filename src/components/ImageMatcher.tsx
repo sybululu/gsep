@@ -1,8 +1,8 @@
 import React, { useState, useEffect, DragEvent, ReactNode } from 'react';
 import { QuizVersion, Question } from '../data';
 import { Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Loader2 } from 'lucide-react';
-import { collection, doc, setDoc, deleteDoc, getDocs } from 'firebase/firestore';
-import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 import { parseTextToQuestions as parseQuestionText } from '../utils/parseQuestions';
@@ -69,6 +69,8 @@ const collectQuestionImages = (questions: Question[]) => {
   return images;
 };
 
+const isLocalDataImage = (item: Item) => item.url.startsWith('data:image/');
+
 const normalizeQuestionsForEditor = (questions: Question[]): Question[] => {
   return questions.map((question, index) => {
     const type: Question['type'] = question.type === 'tf' ? 'tf' : 'single';
@@ -107,23 +109,6 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   const [dragOverZone, setDragOverZone] = useState<string | null>(null);
   const [editorKey, setEditorKey] = useState(0);
   const [visibleQuestionCount, setVisibleQuestionCount] = useState(INITIAL_VISIBLE_QUESTIONS);
-  const [googleUser, setGoogleUser] = useState<{ name: string; email: string; photo?: string } | null>(null);
-
-  // 监听 Google 登录状态
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setGoogleUser({
-          name: user.displayName || '用户',
-          email: user.email || '',
-          photo: user.photoURL || undefined
-        });
-      } else {
-        setGoogleUser(null);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
 
   useEffect(() => {
     if (!selectedVersionId) return;
@@ -426,7 +411,6 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
   };
 
   const handleCloudLogin = async () => {
-    console.log('handleCloudLogin called, password:', password, 'ADMIN_PASSWORD:', ADMIN_PASSWORD);
     await ensureAdminSignedIn();
   };
 
@@ -466,15 +450,24 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       }
 
       try {
-        // 删除题库数据
+        const versionToDelete = versions.find(v => v.id === selectedVersionId);
+        if (versionToDelete && versionToDelete.questions) {
+          // 删除关联的图片
+          const imagesToDelete = new Set<string>();
+          versionToDelete.questions.forEach(q => {
+            if (q.images) q.images.forEach(img => imagesToDelete.add(img));
+            if (q.optionImages) q.optionImages.forEach(img => imagesToDelete.add(img));
+          });
+          
+          if (imagesToDelete.size > 0) {
+            const deleteImagePromises = Array.from(imagesToDelete)
+              .filter(img => !img.startsWith('/') && !img.startsWith('data:') && !PUBLIC_IMAGE_RE.test(img))
+              .map(img => deleteDoc(doc(db, 'images', img)).catch(e => console.error("Failed to delete image: ", e)));
+            await Promise.all(deleteImagePromises);
+          }
+        }
+
         await deleteDoc(doc(db, 'quizVersions', selectedVersionId));
-        
-        // 删除题库对应的图片集合
-        const imagesRef = collection(db, 'images', selectedVersionId, 'images');
-        const imagesSnap = await getDocs(imagesRef);
-        const deleteImagePromises = imagesSnap.docs.map(d => deleteDoc(doc(db, 'images', selectedVersionId, 'images', d.id)).catch(e => console.error("Failed to delete image: ", e)));
-        await Promise.all(deleteImagePromises);
-        
         const newVersions = versions.filter(v => v.id !== selectedVersionId);
         setVersions(newVersions);
         if (newVersions.length > 0) {
@@ -572,6 +565,73 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     }
   };
 
+  const saveDataAndFilesSafe = async () => {
+    if (!(await ensureAdminSignedIn())) {
+      return;
+    }
+
+    try {
+      await auth.currentUser?.getIdToken(true);
+
+      const referencedItems = new Map<string, Item>();
+      localQuestions.forEach(q => {
+        [...(board[`${q.id}-body`] || []), ...(board[`${q.id}-options`] || [])].forEach(item => {
+          if (isLocalDataImage(item)) {
+            referencedItems.set(item.name, item);
+          }
+        });
+      });
+
+      const imagesToUpload = Array.from(referencedItems.values());
+      const oversized = imagesToUpload.filter(item => dataUrlBytes(item.url) > MAX_FIRESTORE_IMAGE_BYTES);
+      if (oversized.length > 0) {
+        throw new Error(`以下图片超过 ${MAX_FIRESTORE_IMAGE_LABEL}，请压缩后再同步：\n${oversized.map(item => item.name).join('\n')}`);
+      }
+
+      if (imagesToUpload.length > 0) {
+        alert(`正在上传 ${imagesToUpload.length} 张已使用的图片到 Firebase...`);
+        const results = await Promise.allSettled(imagesToUpload.map(async item => {
+          await setDoc(doc(db, 'images', item.name), { content: item.url });
+          return item.name;
+        }));
+
+        const failed = results
+          .map((result, index) => ({ result, item: imagesToUpload[index] }))
+          .filter(({ result }) => result.status === 'rejected') as { result: PromiseRejectedResult; item: Item }[];
+
+        if (failed.length > 0) {
+          const details = failed
+            .map(({ item, result }) => `${item.name}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`)
+            .join('\n');
+          throw new Error(`图片上传到 Firebase 失败：\n${details}\n\n如果提示 permission-denied，请检查 Firebase Console 里当前数据库的 Firestore Rules 是否允许管理员写入 images 集合。`);
+        }
+      }
+
+      const versionToUpdate = {
+        id: selectedVersionId,
+        name: versionName,
+        questions: localQuestions.map(q => ({
+          ...q,
+          images: (board[`${q.id}-body`] || []).map(i => i.name),
+          optionImages: (board[`${q.id}-options`] || []).map(i => i.name)
+        }))
+      };
+
+      await setDoc(doc(db, 'quizVersions', selectedVersionId), versionToUpdate);
+
+      alert('同步到 Firebase 成功！题库数据已更新。(刷新页面即可生效)');
+      onClose();
+    } catch (err: any) {
+      console.error(err);
+      try {
+        handleFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
+      } catch (diagnosticError) {
+        console.error(diagnosticError);
+      }
+      alert('保存出错: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
   const saveDataAndFiles = async () => {
     if (!(await ensureAdminSignedIn())) {
       return;
@@ -586,7 +646,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
             if (dataUrlBytes(item.url) > MAX_FIRESTORE_IMAGE_BYTES) {
               throw new Error(`图片 ${item.name} 超过 ${MAX_FIRESTORE_IMAGE_LABEL}，请压缩后再上传。`);
             }
-            const docRef = doc(db, 'images', selectedVersionId, 'images', item.name); 
+            const docRef = doc(db, 'images', item.name); 
             uploads.push(setDoc(docRef, { content: item.url }));
           }
         });
@@ -643,24 +703,9 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       {/* Header */}
       <div className="shrink-0 bg-white p-4 border-b-2 border-slate-200 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-3 px-4">
-          {googleUser ? (
-            <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-xl">
-              {googleUser.photo && (
-                <img src={googleUser.photo} alt="" className="w-6 h-6 rounded-full" />
-              )}
-              <span className="text-sm text-green-700 font-medium">{googleUser.name}</span>
-              <button 
-                onClick={async () => { await signOut(auth); }}
-                className="ml-2 px-2 py-1 bg-red-100 text-red-600 text-xs rounded hover:bg-red-200"
-              >
-                退出
-              </button>
-            </div>
-          ) : (
-            <button onClick={handleCloudLogin} className="px-3 py-2 bg-emerald-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-emerald-700 transition-colors z-50 relative">
-              登录云数据库
-            </button>
-          )}
+          <button onClick={handleCloudLogin} className="px-3 py-2 bg-emerald-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-emerald-700 transition-colors tooltip" title="Firebase Google login for cloud database write permission">
+            登录云数据库
+          </button>
           <Edit3 className="w-8 h-8 text-[#FFD600]" />
           <div>
             <h1 className="text-xl font-bold font-sans">题库管理面板</h1>
@@ -685,7 +730,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
               </button>
               <button 
                 onClick={deleteVersion}
-                className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 shadow-sm"
+                className="px-2 py-1 bg-white border border-red-200 text-red-600 rounded text-xs font-bold hover:bg-red-50"
               >
                 删除当前题库
               </button>
@@ -702,7 +747,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
           <button onClick={handleExportJson} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl flex items-center gap-2 hover:bg-slate-50 transition-colors tooltip" title="导出当前题库为 JSON 文件">
             <FileJson className="w-4 h-4"/> 导出 JSON
           </button>
-          <button onClick={saveDataAndFiles} className="px-4 py-2 bg-blue-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-blue-700 active:scale-95 transition-transform"><Download className="w-4 h-4"/> 部署并同步数据</button>
+          <button onClick={saveDataAndFilesSafe} className="px-4 py-2 bg-blue-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-blue-700 active:scale-95 transition-transform"><Download className="w-4 h-4"/> 部署并同步数据</button>
           <button onClick={onClose} className="w-10 h-10 bg-slate-100 flex items-center justify-center rounded-xl hover:bg-slate-200"><X className="w-5 h-5"/></button>
         </div>
       </div>
