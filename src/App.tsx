@@ -213,7 +213,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-3xl w-full mx-auto px-4 py-8 flex-1 flex flex-col">
+      <main className="max-w-3xl w-full mx-auto px-4 py-8 flex-1 flex flex-col justify-center">
         {screen === 'start' && (
           <div className="bg-white rounded-[32px] border-4 border-black p-8 sm:p-12 text-center shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="w-20 h-20 bg-[#FFD600] border-4 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] rounded-2xl flex items-center justify-center mx-auto mb-6">

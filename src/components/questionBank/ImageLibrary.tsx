@@ -41,6 +41,7 @@ export function ImageLibrary({
         onDragOver={(e) => {
           e.preventDefault();
           onUploadOver(e);
+          if (onLibraryDragOver) onLibraryDragOver(e);
         }}
         onDragLeave={(e) => {
           // 只有真正离开整个区域时才触发
@@ -57,6 +58,7 @@ export function ImageLibrary({
         onDrop={(e) => {
           e.preventDefault();
           onUploadDrop(e);
+          if (onLibraryImageDrop) onLibraryImageDrop(e);
         }}
         className={`relative flex flex-1 flex-col transition-all ${
           isUploadHover ? 'bg-blue-50/50' : ''

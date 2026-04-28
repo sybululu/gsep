@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, type DragEvent } from 'react';
-import { ChevronDown, Download, FileJson, Loader2, Plus, Trash2, Upload, X } from 'lucide-react';
+import { ChevronDown, Download, Edit3, FileJson, Loader2, Plus, Trash2, Upload, X } from 'lucide-react';
 import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
 import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase';
@@ -66,6 +66,21 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     } catch (err) {
       console.error(err);
       alert('删除失败');
+    }
+  };
+
+  const handleRenameVersion = async () => {
+    const newName = prompt('请输入新题库名称：', name);
+    if (!newName || newName === name) return;
+    if (!(await ensureQuestionBankAdmin(password))) return;
+    try {
+      await setDoc(doc(db, 'quizVersions', selectedId), { ...versions.find(v => v.id === selectedId), name: newName }, { merge: true });
+      setVersions(prev => prev.map(v => v.id === selectedId ? { ...v, name: newName } : v));
+      setName(newName);
+      alert('重命名成功');
+    } catch (err) {
+      console.error(err);
+      alert('重命名失败');
     }
   };
   const [uploadHover, setUploadHover] = useState(false);
@@ -191,15 +206,15 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     event.preventDefault();
     event.stopPropagation();
     
-    // 只有从 DropZone 拖来的图片才能拖回图片库
+    // 只有从题目区域拖来的图片才能拖回图片库
     if (payload.from === 'library') return;
     
     // 将图片添加到图片库
     const imageName = payload.image;
     // 检查图片是否已存在于库中
     if (!libraryImages.find(img => img.name === imageName)) {
-      // 如果是云端图片，尝试从 cloudImages 获取
-      const content = cloudImages[imageName];
+      // 尝试从 cloudImages、localImages 或 usedImagesRef 获取图片内容
+      const content = cloudImages[imageName] || usedImagesRef.current[imageName];
       if (content) {
         setLibraryImages(prev => [...prev, {
           id: `local-${Date.now()}-${imageName}`,
@@ -328,6 +343,9 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
             {versions.map(version => <option key={version.id} value={version.id}>{version.name}</option>)}
           </select>
           <ChevronDown className="h-4 w-4" />
+          <button onClick={handleRenameVersion} className="rounded border border-blue-400 px-2 py-2 font-bold text-blue-600 flex items-center gap-1">
+            <Edit3 className="h-4 w-4" /> 重命名
+          </button>
           <button onClick={createVersion} className="rounded border px-2 py-2 font-bold">新建题库</button>
           {versions.length > 1 && (
             <button onClick={handleDeleteVersion} className="rounded bg-red-600 px-3 py-2 font-bold text-white flex items-center gap-1">
