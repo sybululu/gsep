@@ -4,7 +4,7 @@ export const normalizeQuizQuestion = (question: Partial<Question>, index: number
   const type: Question['type'] = question.type === 'tf' ? 'tf' : 'single';
   const fallbackOptions = type === 'tf' ? ['正确', '错误'] : ['A', 'B', 'C', 'D'];
   const rawOptions = Array.isArray(question.options) && question.options.length >= 2
-    ? question.options.map(option => String(option ?? '').trim()).filter(Boolean)
+    ? question.options.map(option => String(option ?? '').trim())
     : fallbackOptions;
   const options = type === 'tf' ? ['正确', '错误'] : rawOptions;
   // 兼容字符串和数字类型的答案
