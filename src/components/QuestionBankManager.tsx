@@ -89,7 +89,7 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     if (!(await ensureQuestionBankAdmin(password))) return;
     try {
       await supabase.from(QUIZ_VERSIONS_TABLE).update({ name: newName, updated_at: new Date().toISOString() }).eq('id', selectedId);
-      setVersions(prev => prev.map(v => v.id === selectedId ? { ...v, name: newName } : v));
+      setVersions(prev => prev.map(v => v.id === selectedId ? { ...v, name: newName, questions } : v));
       setName(newName);
       alert('重命名成功');
     } catch (err) {
