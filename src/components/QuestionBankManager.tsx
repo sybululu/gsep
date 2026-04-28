@@ -123,9 +123,9 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     setVisibleCount(Math.min(PAGE_SIZE, nextQuestions.length || PAGE_SIZE));
     setCloudImages({});
     
-    // 加载对应题库的云端图片
+    // 加载图库图片：只加载还没被使用的图片
     const loadLibraryImages = async () => {
-      // 收集题库中实际使用的图片 ID
+      // 收集题库中已经使用的图片 ID
       const usedIds = new Set<string>();
       nextQuestions.forEach((q: Question) => {
         [...(q.images || []), ...(q.optionImages || [])].forEach((img: string) => {
@@ -133,28 +133,24 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
         });
       });
       
-      if (usedIds.size === 0) {
-        setLibraryImages([]);
-        return;
-      }
-      
       try {
         const { data, error } = await supabase
           .from(IMAGES_TABLE)
           .select('image_id, content')
-          .eq('version_id', selectedId)
-          .in('image_id', Array.from(usedIds));
+          .eq('version_id', selectedId);
         
         if (data) {
-          const loaded: LibraryImage[] = data.map(d => ({
-            id: d.image_id,
-            name: d.image_id,
-            content: d.content
-          }));
-          setLibraryImages(loaded);
+          // 只保留还没被使用的云端图片
+          const unusedImages: LibraryImage[] = data
+            .filter(d => !usedIds.has(d.image_id))
+            .map(d => ({ id: d.image_id, name: d.image_id, content: d.content }));
+          setLibraryImages(unusedImages);
+        } else {
+          setLibraryImages([]);
         }
       } catch (error) {
         console.warn('Failed to load library images', error);
+        setLibraryImages([]);
       }
     };
     loadLibraryImages();
