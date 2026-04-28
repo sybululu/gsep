@@ -125,11 +125,25 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     
     // 加载对应题库的云端图片
     const loadLibraryImages = async () => {
+      // 收集题库中实际使用的图片 ID
+      const usedIds = new Set<string>();
+      nextQuestions.forEach((q: Question) => {
+        [...(q.images || []), ...(q.optionImages || [])].forEach((img: string) => {
+          if (isCloudImageId(img)) usedIds.add(img);
+        });
+      });
+      
+      if (usedIds.size === 0) {
+        setLibraryImages([]);
+        return;
+      }
+      
       try {
         const { data, error } = await supabase
           .from(IMAGES_TABLE)
           .select('image_id, content')
-          .eq('version_id', selectedId);
+          .eq('version_id', selectedId)
+          .in('image_id', Array.from(usedIds));
         
         if (data) {
           const loaded: LibraryImage[] = data.map(d => ({
