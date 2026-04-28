@@ -44,8 +44,8 @@ const OptionImage = ({ optImg, versionId }: { optImg: string; versionId: string 
   if (errorUrl || !srcPath) return null;
 
   return (
-    <div className="mt-2 text-center p-2 bg-white border border-zinc-200 rounded max-w-[200px]">
-      <img src={srcPath} alt="选项配图" className="max-h-16 object-contain" onError={() => setErrorUrl(true)} />
+    <div className="mt-2 text-center p-2 bg-white border border-zinc-200 rounded max-w-[300px] mx-auto">
+      <img src={srcPath} alt="选项配图" className="max-h-48 object-contain" onError={() => setErrorUrl(true)} />
     </div>
   );
 };
