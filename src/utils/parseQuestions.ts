@@ -77,17 +77,13 @@ export const parseTextToQuestions = (rawText: string): Question[] => {
     if (!numberMatch) return;
 
     const number = parseInt(numberMatch[1]);
-    const optionMatches = [...block.matchAll(/([A-D])[、.]\s*([\s\S]*?)(?=\s*[A-D][、.]|$)/g)];
     
-    const options: string[] = [];
-    optionMatches.forEach(match => {
-      const optText = match[2].trim();
-      options.push(optText);
-    });
-
-    // 如果解析到了选项（无论长短），就用解析到的选项
-    // 如果没有解析到选项（图片场景），才预留 ABCD 空选项
-    const useOptions = options.length >= 2 ? options : ['A', 'B', 'C', 'D'];
+    // 逐个匹配 A、B、C、D 选项，确保每个都有值（图片留空）
+    const optA = block.match(/A[、.]\s*([\s\S]*?)(?=\s*B[、.]|$)/)?.[1]?.trim() ?? '';
+    const optB = block.match(/B[、.]\s*([\s\S]*?)(?=\s*C[、.]|$)/)?.[1]?.trim() ?? '';
+    const optC = block.match(/C[、.]\s*([\s\S]*?)(?=\s*D[、.]|$)/)?.[1]?.trim() ?? '';
+    const optD = block.match(/D[、.]\s*([\s\S]*?)(?=$)/)?.[1]?.trim() ?? '';
+    const options = [optA, optB, optC, optD];
 
     // 题目文本：去掉题号和选项部分
     let title = block
@@ -102,7 +98,7 @@ export const parseTextToQuestions = (rawText: string): Question[] => {
       id: `q-${Date.now()}-${Math.random().toString(36).substring(2, 9)}-${idx}`,
       type: 'single',
       text: title,
-      options: useOptions,
+      options: options,
       answer: answerIndex,
       score: singleScore,
       images: [],
