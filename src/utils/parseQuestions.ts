@@ -88,8 +88,8 @@ export const parseTextToQuestions = (rawText: string): Question[] => {
       if (optText.length > 1) validCount++;
     });
 
-    // 如果有效选项少于2个（图片选项场景），预留 A/B/C/D 空白选项
-    const useOptions = validCount >= 2 ? options : ['A', 'B', 'C', 'D'];
+    // 如果有效选项少于2个（图片选项场景），预留空文本选项
+    const useOptions = validCount >= 2 ? options : ['', '', '', ''];
 
     // 题目文本：去掉题号和选项部分
     let title = block
