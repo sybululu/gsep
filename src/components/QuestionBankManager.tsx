@@ -373,11 +373,9 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
             <Edit3 className="h-4 w-4" /> 重命名
           </button>
           <button onClick={createVersion} className="rounded border px-2 py-2 font-bold">新建题库</button>
-          {versions.length > 1 && (
-            <button onClick={handleDeleteVersion} className="rounded bg-red-600 px-3 py-2 font-bold text-white flex items-center gap-1">
-              <Trash2 className="h-4 w-4" /> 删除题库
-            </button>
-          )}
+          <button onClick={handleDeleteVersion} className="rounded bg-red-600 px-3 py-2 font-bold text-white flex items-center gap-1">
+            <Trash2 className="h-4 w-4" /> 删除题库
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setTextOpen(true)} className="rounded-xl bg-purple-600 px-3 py-2 font-bold text-white"><FileJson className="inline h-4 w-4" /> 文本导入</button>
