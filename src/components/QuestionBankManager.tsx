@@ -238,7 +238,6 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
 
   // 处理图片拖拽到图片库上方时的 hover 状态
   const onLibraryDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes('text/gesp-image')) return;
     event.preventDefault();
     event.stopPropagation();
     setUploadHover(true);
@@ -410,7 +409,16 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
           onUploadLeave={() => setUploadHover(false)}
           onUploadDrop={onUploadDrop}
           onImageDragStart={startQuestionImageDrag}
-          onRemove={index => setLibraryImages(prev => prev.filter((_, i) => i !== index))}
+          onRemove={async index => {
+            const image = libraryImages[index];
+            if (!image) return;
+            try {
+              await deleteDoc(doc(db, 'images', selectedId, 'images', image.name));
+            } catch (e) {
+              console.warn('Failed to delete from cloud', e);
+            }
+            setLibraryImages(prev => prev.filter((_, i) => i !== index));
+          }}
           onLibraryImageDrop={onLibraryImageDrop}
           onLibraryDragOver={onLibraryDragOver}
         />

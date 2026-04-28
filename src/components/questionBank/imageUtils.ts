@@ -25,9 +25,10 @@ export const resolveImageSrc = (
 ) => {
   if (!image) return '';
   if (image.startsWith('data:') || image.startsWith('/')) return image;
-  if (localImages[image]) return localImages[image];
   if (PUBLIC_IMAGE_RE.test(image)) return `/${image}`;
-  return cloudImages[image] || '';
+  // 云端优先，云端没有再用本地
+  if (cloudImages[image]) return cloudImages[image];
+  return localImages[image] || '';
 };
 
 export const imageDisplayName = (image: string) => image.startsWith('data:') ? '本地图片' : image;
