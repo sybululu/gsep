@@ -1,11 +1,10 @@
-import { doc, setDoc } from 'firebase/firestore';
 import type { Question } from '../../data';
-import { db } from '../../firebase';
+import { supabase, QUIZ_VERSIONS_TABLE, IMAGES_TABLE } from '../../supabase';
 import { buildQuizVersion, validateQuizVersion } from '../../utils/quizValidation';
 import { dataUrlBytes, MAX_FIRESTORE_IMAGE_BYTES, MAX_FIRESTORE_IMAGE_LABEL } from './imageUtils';
 import type { LibraryImage } from './types';
 
-export async function saveQuestionBankToFirestore(
+export async function saveQuestionBankToSupabase(
   selectedId: string,
   name: string,
   questions: Question[],
@@ -20,10 +19,25 @@ export async function saveQuestionBankToFirestore(
     }
   }
 
-  await Promise.all(libraryImages.map(image => setDoc(doc(db, 'images', selectedId, 'images', image.name), {
+  // 批量上传图片
+  const imageRecords = libraryImages.map(image => ({
+    version_id: selectedId,
+    image_id: image.name,
     content: image.content,
-  })));
+  }));
 
-  await setDoc(doc(db, 'quizVersions', selectedId), quiz);
+  if (imageRecords.length > 0) {
+    const { error: imageError } = await supabase
+      .from(IMAGES_TABLE)
+      .upsert(imageRecords);
+    if (imageError) throw imageError;
+  }
+
+  // 保存题库
+  const { error: quizError } = await supabase
+    .from(QUIZ_VERSIONS_TABLE)
+    .upsert(quiz);
+  if (quizError) throw quizError;
+
   return quiz;
 }

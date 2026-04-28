@@ -1,28 +1,30 @@
 import { useState, useEffect } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase';
-import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
+import { supabase, IMAGES_TABLE } from '../supabase';
 
 const PUBLIC_IMAGE_RE = /^[\w-]+\.(png|jpe?g|gif|webp|svg)$/i;
 
 export const QuestionImage = ({ id, fallbackText, images, versionId }: { id: string; fallbackText?: string; images?: string[]; versionId?: string }) => {
   const [errorUrls, setErrorUrls] = useState<Record<string, boolean>>({});
-  const [firebaseImages, setFirebaseImages] = useState<Record<string, string>>({});
+  const [cloudImages, setCloudImages] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!images || images.length === 0 || !versionId) return;
     
     images.forEach(async (img) => {
       // If NOT a local path and we haven't fetched it
-      if (!img.startsWith('/') && !img.startsWith('data:') && !PUBLIC_IMAGE_RE.test(img) && !firebaseImages[img] && !errorUrls[img]) {
+      if (!img.startsWith('/') && !img.startsWith('data:') && !PUBLIC_IMAGE_RE.test(img) && !cloudImages[img] && !errorUrls[img]) {
         try {
-          const docRef = doc(db, 'images', versionId, 'images', img);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            setFirebaseImages(prev => ({ ...prev, [img]: docSnap.data().content }));
+          const { data } = await supabase
+            .from(IMAGES_TABLE)
+            .select('content')
+            .eq('version_id', versionId)
+            .eq('image_id', img)
+            .single();
+          if (data?.content) {
+            setCloudImages(prev => ({ ...prev, [img]: data.content }));
           }
         } catch (e) {
-          try { handleFirestoreError(e, OperationType.GET, 'images'); } catch(err) {}
+          console.warn('Failed to load cloud image', img, e);
         }
       }
     });
@@ -39,8 +41,8 @@ export const QuestionImage = ({ id, fallbackText, images, versionId }: { id: str
             srcPath = img;
           } else if (PUBLIC_IMAGE_RE.test(img)) {
             srcPath = `/${img}`;
-          } else if (firebaseImages[img]) {
-            srcPath = firebaseImages[img];
+          } else if (cloudImages[img]) {
+            srcPath = cloudImages[img];
           } else {
             srcPath = `/${img}`; // Fallback to public/
           }
@@ -49,7 +51,7 @@ export const QuestionImage = ({ id, fallbackText, images, versionId }: { id: str
 
           return (
             <div key={idx} className="relative flex-1 bg-zinc-50 border-4 border-dashed border-zinc-200 rounded-2xl flex items-center justify-center overflow-hidden p-2 min-h-[4rem]">
-              {!firebaseImages[img] && !PUBLIC_IMAGE_RE.test(img) && !img.startsWith('/') && !img.startsWith('data:') && (
+              {!cloudImages[img] && !PUBLIC_IMAGE_RE.test(img) && !img.startsWith('/') && !img.startsWith('data:') && (
                  <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-400">Loading...</div>
               )}
               <img

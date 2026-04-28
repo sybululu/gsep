@@ -1,15 +1,13 @@
 import { useEffect, useState, useRef, type DragEvent } from 'react';
 import { ChevronDown, Download, Edit3, FileJson, Loader2, Plus, Trash2, Upload, X } from 'lucide-react';
-import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
-import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-import { db, auth } from '../firebase';
+import { supabase, QUIZ_VERSIONS_TABLE, IMAGES_TABLE } from '../supabase';
 import type { Question, QuizVersion } from '../data';
 import { parseTextToQuestions } from '../utils/parseQuestions';
 import { normalizeQuizQuestions } from '../utils/quizValidation';
 import { ensureQuestionBankAdmin } from './questionBank/adminAuth';
 import { ImageLibrary } from './questionBank/ImageLibrary';
 import { QuestionCard } from './questionBank/QuestionCard';
-import { saveQuestionBankToFirestore } from './questionBank/saveQuiz';
+import { saveQuestionBankToSupabase } from './questionBank/saveQuiz';
 import { handleQuestionImageDragOver, moveQuestionImage, readQuestionImageDrag, startQuestionImageDrag } from './questionBank/dragHelpers';
 import { imageFilesToLibraryItems, isFileDrag } from './questionBank/uploadHelpers';
 import { isCloudImageId } from './questionBank/imageUtils';
@@ -33,17 +31,23 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
 
   // 监听登录状态
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setGoogleUser(user ? { name: user.displayName || '用户', email: user.email || '', photo: user.photoURL || undefined } : null);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setGoogleUser(session?.user ? {
+        name: session.user.user_metadata?.full_name || '用户',
+        email: session.user.email || '',
+        photo: session.user.user_metadata?.avatar_url || undefined
+      } : null);
     });
-    return () => unsubscribe();
+    return () => subscription.unsubscribe();
   }, []);
 
   const handleCloudLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: 'select_account' });
     try {
-      await signInWithPopup(auth, provider);
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { queryParams: { prompt: 'select_account' } }
+      });
+      if (error) throw error;
     } catch (err) {
       console.error(err);
       alert('登录失败');
@@ -51,15 +55,17 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
   };
 
   const handleLogout = async () => {
-    await signOut(auth);
+    await supabase.auth.signOut();
   };
 
   const handleDeleteVersion = async () => {
     if (!confirm(`确定删除题库 "${name}" 吗？此操作不可撤销！`)) return;
     if (!(await ensureQuestionBankAdmin(password))) return;
     try {
-      await deleteDoc(doc(db, 'quizVersions', selectedId));
-      await deleteDoc(doc(db, 'images', selectedId));
+      // 删除题库
+      await supabase.from(QUIZ_VERSIONS_TABLE).delete().eq('id', selectedId);
+      // 删除关联图片
+      await supabase.from(IMAGES_TABLE).delete().eq('version_id', selectedId);
       setVersions(prev => prev.filter(v => v.id !== selectedId));
       setSelectedId(versions.find(v => v.id !== selectedId)?.id || '');
       alert('删除成功');
@@ -74,7 +80,7 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     if (!newName || newName === name) return;
     if (!(await ensureQuestionBankAdmin(password))) return;
     try {
-      await setDoc(doc(db, 'quizVersions', selectedId), { ...versions.find(v => v.id === selectedId), name: newName }, { merge: true });
+      await supabase.from(QUIZ_VERSIONS_TABLE).update({ name: newName, updated_at: new Date().toISOString() }).eq('id', selectedId);
       setVersions(prev => prev.map(v => v.id === selectedId ? { ...v, name: newName } : v));
       setName(newName);
       alert('重命名成功');
@@ -112,16 +118,19 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     // 加载对应题库的云端图片
     const loadLibraryImages = async () => {
       try {
-        const imagesRef = collection(db, 'images', selectedId, 'images');
-        const snap = await getDocs(imagesRef);
-        const loaded: LibraryImage[] = [];
-        snap.forEach(d => {
-          const data = d.data();
-          if (typeof data.content === 'string') {
-            loaded.push({ id: d.id, name: d.id, content: data.content });
-          }
-        });
-        setLibraryImages(loaded);
+        const { data, error } = await supabase
+          .from(IMAGES_TABLE)
+          .select('image_id, content')
+          .eq('version_id', selectedId);
+        
+        if (data) {
+          const loaded: LibraryImage[] = data.map(d => ({
+            id: d.image_id,
+            name: d.image_id,
+            content: d.content
+          }));
+          setLibraryImages(loaded);
+        }
       } catch (error) {
         console.warn('Failed to load library images', error);
       }
@@ -141,9 +150,13 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
 
     newIds.forEach(async image => {
       try {
-        const snap = await getDoc(doc(db, 'images', selectedId, 'images', image));
-        const content = snap.exists() ? snap.data().content : '';
-        if (typeof content === 'string') setCloudImages(prev => ({ ...prev, [image]: content }));
+        const { data } = await supabase
+          .from(IMAGES_TABLE)
+          .select('content')
+          .eq('version_id', selectedId)
+          .eq('image_id', image)
+          .single();
+        if (data?.content) setCloudImages(prev => ({ ...prev, [image]: data.content }));
       } catch (error) {
         console.warn('Failed to load cloud image', image, error);
       }
@@ -280,7 +293,7 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
     const versionName = prompt('请输入新题库名称：');
     if (!versionName || !(await ensureQuestionBankAdmin(password))) return;
     const version = { id: `version-${Date.now()}`, name: versionName, questions: [] };
-    await setDoc(doc(db, 'quizVersions', version.id), version);
+    await supabase.from(QUIZ_VERSIONS_TABLE).insert(version);
     setVersions(prev => [...prev, version]);
     setSelectedId(version.id);
   };
@@ -419,7 +432,7 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
             const image = libraryImages[index];
             if (!image) return;
             try {
-              await deleteDoc(doc(db, 'images', selectedId, 'images', image.name));
+              await supabase.from(IMAGES_TABLE).delete().eq('version_id', selectedId).eq('image_id', image.name);
             } catch (e) {
               console.warn('Failed to delete from cloud', e);
             }

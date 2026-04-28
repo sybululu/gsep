@@ -4,9 +4,7 @@ import { quizVersions as initialQuizVersions, QuizVersion, Question } from './da
 import { QuestionImage } from './components/QuestionImage';
 
 import { ImageMatcher } from './components/ImageMatcher';
-import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
-import { db } from './firebase';
-import { handleFirestoreError, OperationType } from './utils/firestoreErrorHandler';
+import { supabase, QUIZ_VERSIONS_TABLE } from './supabase';
 
 const ADMIN_PASSWORD = '5834';
 const PUBLIC_IMAGE_RE = /^[\w-]+\.(png|jpe?g|gif|webp|svg)$/i;
@@ -21,13 +19,17 @@ const OptionImage = ({ optImg, versionId }: { optImg: string; versionId: string 
     } else if (PUBLIC_IMAGE_RE.test(optImg)) {
       setSrcPath(`/${optImg}`);
     } else {
-      // Fetch from Firebase
+      // Fetch from Supabase
       const fetchImage = async () => {
         try {
-          const docRef = doc(db, 'images', versionId, 'images', optImg);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            setSrcPath(docSnap.data().content);
+          const { data, error } = await supabase
+            .from('images')
+            .select('content')
+            .eq('version_id', versionId)
+            .eq('image_id', optImg)
+            .single();
+          if (data?.content) {
+            setSrcPath(data.content);
           } else {
             setSrcPath(`/${optImg}`);
           }
@@ -70,23 +72,19 @@ export default function App() {
   useEffect(() => {
     async function fetchQuizzes() {
       try {
-        const snap = await getDocs(collection(db, 'quizVersions'));
-        if (!snap.empty) {
-          const fetched = snap.docs.map(d => d.data() as QuizVersion);
-          if (fetched.length > 0) {
-            setVersions(fetched);
-            if (!fetched.find(v => v.id === currentVersionId)) {
-              setCurrentVersionId(fetched[0].id);
-            }
+        const { data, error } = await supabase
+          .from(QUIZ_VERSIONS_TABLE)
+          .select('*')
+          .order('created_at', { ascending: false });
+        
+        if (data && data.length > 0) {
+          setVersions(data);
+          if (!data.find((v: QuizVersion) => v.id === currentVersionId)) {
+            setCurrentVersionId(data[0].id);
           }
         }
       } catch (e) {
-        // Fallback or ignore, handleFirestoreError will log and throw
-        try {
-          handleFirestoreError(e, OperationType.GET, 'quizVersions');
-        } catch (err) {
-          console.warn("Failed fetching from Firebase, using local data.");
-        }
+        console.warn("Failed fetching from Supabase, using local data.", e);
       } finally {
         setLoading(false);
       }

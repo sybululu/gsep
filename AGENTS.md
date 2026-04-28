@@ -1,12 +1,20 @@
 ## 项目概述
-GESP Quiz Practice - 基于 Vite + React 的在线编程题库练习平台，支持 GESP 等级考试题目管理、在线答题和 Firebase 云端同步。
+GESP Quiz Practice - 基于 Vite + React 的在线编程题库练习平台，支持 GESP 等级考试题目管理、在线答题和 Supabase 云端同步。
 
 ## 技术栈
 - **框架**：Vite 6 + React 19 + TypeScript
 - **样式**：Tailwind CSS 4
-- **云服务**：Firebase Firestore（题目库存储）
+- **云服务**：Supabase（题目库和图片存储）
 - **包管理器**：pnpm
 - **代码规范**：ESLint
+
+## Supabase 配置
+- **Project URL**：`https://rwjfsyyogihndslopalb.supabase.co`
+- **表结构**：
+  - `quiz_versions`：题库版本（id, name, questions）
+  - `images`：图片（version_id, image_id, content）
+  - `admins`：管理员邮箱（email）
+- **RLS 策略**：公开读取，管理员写入
 
 ## 目录结构
 ```

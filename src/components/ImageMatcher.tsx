@@ -1,10 +1,7 @@
 import React, { useState, useEffect, DragEvent, ReactNode } from 'react';
 import { QuizVersion, Question } from '../data';
 import { Download, Upload, FileJson, X, Plus, ChevronDown, Trash2, Edit3, Loader2 } from 'lucide-react';
-import { doc, setDoc, deleteDoc } from 'firebase/firestore';
-import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
-import { db, auth } from '../firebase';
-import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
+import { supabase, QUIZ_VERSIONS_TABLE, IMAGES_TABLE } from '../supabase';
 import { parseTextToQuestions as parseQuestionText } from '../utils/parseQuestions';
 
 interface Item {
@@ -219,7 +216,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
 
       const oversized = files.filter(file => file.size > MAX_FIRESTORE_IMAGE_BYTES);
       if (oversized.length > 0) {
-        alert(`以下图片过大，无法保存到 Firebase，请压缩到 ${MAX_FIRESTORE_IMAGE_LABEL} 以内：\n${oversized.map(file => file.name).join('\n')}`);
+        alert(`以下图片过大，无法保存到 Supabase，请压缩到 ${MAX_FIRESTORE_IMAGE_LABEL} 以内：\n${oversized.map(file => file.name).join('\n')}`);
       }
 
       const acceptedFiles = files.filter(file => file.size <= MAX_FIRESTORE_IMAGE_BYTES);
@@ -387,24 +384,28 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       return false;
     }
 
-    if (auth.currentUser?.email === ADMIN_EMAIL) {
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (user?.email === ADMIN_EMAIL) {
       return true;
     }
 
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: 'select_account' });
     try {
-      if (auth.currentUser && auth.currentUser.email !== ADMIN_EMAIL) {
-        await signOut(auth);
-      }
-      await signInWithPopup(auth, provider);
-      if (auth.currentUser?.email !== ADMIN_EMAIL) {
-        alert(`Please sign in to Firebase with ${ADMIN_EMAIL}. The current Google account cannot write to the cloud database.`);
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { queryParams: { prompt: 'select_account' } }
+      });
+      
+      if (error) throw error;
+      
+      const { data: { user: newUser } } = await supabase.auth.getUser();
+      if (newUser?.email !== ADMIN_EMAIL) {
+        alert(`Please sign in to Supabase with ${ADMIN_EMAIL}. The current Google account cannot write to the cloud database.`);
         return false;
       }
       return true;
     } catch (err) {
-      alert('Firebase Google login is required before writing to the cloud database. If no popup appears, check that Google provider is enabled and this domain is authorized in Firebase Auth.');
+      alert('Supabase Google login is required before writing to the cloud database.');
       console.error(err);
       return false;
     }
@@ -429,13 +430,12 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     }
     
     try {
-      await setDoc(doc(db, 'quizVersions', newId), newVersion);
+      await supabase.from(QUIZ_VERSIONS_TABLE).insert(newVersion);
       setVersions([...versions, newVersion]);
       setSelectedVersionId(newId);
       alert('创建新题库成功！');
     } catch(err) {
       alert("创建失败: " + String(err));
-      handleFirestoreError(err, OperationType.CREATE, 'quizVersions');
     }
   };
 
@@ -450,24 +450,10 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       }
 
       try {
-        const versionToDelete = versions.find(v => v.id === selectedVersionId);
-        if (versionToDelete && versionToDelete.questions) {
-          // 删除关联的图片
-          const imagesToDelete = new Set<string>();
-          versionToDelete.questions.forEach(q => {
-            if (q.images) q.images.forEach(img => imagesToDelete.add(img));
-            if (q.optionImages) q.optionImages.forEach(img => imagesToDelete.add(img));
-          });
-          
-          if (imagesToDelete.size > 0) {
-            const deleteImagePromises = Array.from(imagesToDelete)
-              .filter(img => !img.startsWith('/') && !img.startsWith('data:') && !PUBLIC_IMAGE_RE.test(img))
-              .map(img => deleteDoc(doc(db, 'images', img)).catch(e => console.error("Failed to delete image: ", e)));
-            await Promise.all(deleteImagePromises);
-          }
-        }
-
-        await deleteDoc(doc(db, 'quizVersions', selectedVersionId));
+        // 删除题库和关联图片
+        await supabase.from(IMAGES_TABLE).delete().eq('version_id', selectedVersionId);
+        await supabase.from(QUIZ_VERSIONS_TABLE).delete().eq('id', selectedVersionId);
+        
         const newVersions = versions.filter(v => v.id !== selectedVersionId);
         setVersions(newVersions);
         if (newVersions.length > 0) {
@@ -476,7 +462,6 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         alert('删除成功！关联数据和图片已同步删除。');
       } catch(err) {
         alert("删除失败: " + String(err));
-        handleFirestoreError(err, OperationType.DELETE, 'quizVersions');
       }
     }
   };
@@ -571,8 +556,6 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     }
 
     try {
-      await auth.currentUser?.getIdToken(true);
-
       const referencedItems = new Map<string, Item>();
       localQuestions.forEach(q => {
         [...(board[`${q.id}-body`] || []), ...(board[`${q.id}-options`] || [])].forEach(item => {
@@ -589,21 +572,19 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       }
 
       if (imagesToUpload.length > 0) {
-        alert(`正在上传 ${imagesToUpload.length} 张已使用的图片到 Firebase...`);
-        const results = await Promise.allSettled(imagesToUpload.map(async item => {
-          await setDoc(doc(db, 'images', item.name), { content: item.url });
-          return item.name;
+        alert(`正在上传 ${imagesToUpload.length} 张已使用的图片到 Supabase...`);
+        const imageRecords = imagesToUpload.map(item => ({
+          version_id: selectedVersionId,
+          image_id: item.name,
+          content: item.url
         }));
-
-        const failed = results
-          .map((result, index) => ({ result, item: imagesToUpload[index] }))
-          .filter(({ result }) => result.status === 'rejected') as { result: PromiseRejectedResult; item: Item }[];
-
-        if (failed.length > 0) {
-          const details = failed
-            .map(({ item, result }) => `${item.name}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`)
-            .join('\n');
-          throw new Error(`图片上传到 Firebase 失败：\n${details}\n\n如果提示 permission-denied，请检查 Firebase Console 里当前数据库的 Firestore Rules 是否允许管理员写入 images 集合。`);
+        
+        const { error: imageError } = await supabase
+          .from(IMAGES_TABLE)
+          .upsert(imageRecords);
+          
+        if (imageError) {
+          throw new Error(`图片上传到 Supabase 失败：${imageError.message}`);
         }
       }
 
@@ -617,17 +598,12 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         }))
       };
 
-      await setDoc(doc(db, 'quizVersions', selectedVersionId), versionToUpdate);
+      await supabase.from(QUIZ_VERSIONS_TABLE).upsert(versionToUpdate);
 
-      alert('同步到 Firebase 成功！题库数据已更新。(刷新页面即可生效)');
+      alert('同步到 Supabase 成功！题库数据已更新。(刷新页面即可生效)');
       onClose();
     } catch (err: any) {
       console.error(err);
-      try {
-        handleFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
-      } catch (diagnosticError) {
-        console.error(diagnosticError);
-      }
       alert('保存出错: ' + (err instanceof Error ? err.message : String(err)));
     }
   };
@@ -638,23 +614,29 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
     }
 
     try {
-      // 收集并上传新图片至 Firebase
-      const uploads: Promise<void>[] = [];
+      // 收集并上传新图片至 Supabase
+      const imageRecords: { version_id: string; image_id: string; content: string }[] = [];
       (Object.values(board) as Item[][]).forEach((list) => {
         list.forEach(item => {
           if (item.url.startsWith('data:image/')) {
             if (dataUrlBytes(item.url) > MAX_FIRESTORE_IMAGE_BYTES) {
               throw new Error(`图片 ${item.name} 超过 ${MAX_FIRESTORE_IMAGE_LABEL}，请压缩后再上传。`);
             }
-            const docRef = doc(db, 'images', item.name); 
-            uploads.push(setDoc(docRef, { content: item.url }));
+            imageRecords.push({
+              version_id: selectedVersionId,
+              image_id: item.name,
+              content: item.url
+            });
           }
         });
       });
 
-      if (uploads.length > 0) {
-        alert(`正在上传 ${uploads.length} 张图片到 Firebase...`);
-        await Promise.all(uploads);
+      if (imageRecords.length > 0) {
+        alert(`正在上传 ${imageRecords.length} 张图片到 Supabase...`);
+        const { error: imageError } = await supabase
+          .from(IMAGES_TABLE)
+          .upsert(imageRecords);
+        if (imageError) throw imageError;
       }
 
       // 更新对应的 QuizVersion
@@ -670,13 +652,12 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
         })
       };
 
-      await setDoc(doc(db, 'quizVersions', selectedVersionId), versionToUpdate);
+      await supabase.from(QUIZ_VERSIONS_TABLE).upsert(versionToUpdate);
 
-      alert('同步到 Firebase 成功！题库数据已更新。(刷新页面即可生效)');
+      alert('同步到 Supabase 成功！题库数据已更新。(刷新页面即可生效)');
       onClose();
     } catch (err: any) {
       console.error(err);
-      handleFirestoreError(err, OperationType.UPDATE, 'Firebase Sync');
       alert('保存出错: ' + err.message);
     }
   };
@@ -703,7 +684,7 @@ export const ImageMatcher = ({ password, initialVersions, onClose }: { password?
       {/* Header */}
       <div className="shrink-0 bg-white p-4 border-b-2 border-slate-200 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-3 px-4">
-          <button onClick={handleCloudLogin} className="px-3 py-2 bg-emerald-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-emerald-700 transition-colors tooltip" title="Firebase Google login for cloud database write permission">
+          <button onClick={handleCloudLogin} className="px-3 py-2 bg-emerald-600 text-white font-bold rounded-xl flex items-center gap-2 hover:bg-emerald-700 transition-colors tooltip" title="Supabase Google login for cloud database write permission">
             登录云数据库
           </button>
           <Edit3 className="w-8 h-8 text-[#FFD600]" />
