@@ -341,7 +341,7 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
         }
       });
       
-      const quiz = await saveQuestionBankToFirestore(selectedId, name, questions, allImages);
+      const quiz = await saveQuestionBankToSupabase(selectedId, name, questions, allImages);
       setVersions(prev => prev.map(version => version.id === selectedId ? quiz : version));
       alert(`同步成功：${quiz.questions.length} 道题，${allImages.length} 张图片。`);
       onClose();
