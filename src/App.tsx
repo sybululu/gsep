@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ChevronRight, ChevronLeft, CheckCircle2, RotateCcw, AlertCircle, Play, ChevronDown, Loader2 } from 'lucide-react';
-import { quizVersions as initialQuizVersions, QuizVersion, Question } from './data';
+import { QuizVersion, Question } from './data';
 import { QuestionImage } from './components/QuestionImage';
 
 import { ImageMatcher } from './components/ImageMatcher';
@@ -57,8 +57,8 @@ export default function App() {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, number>>({});
   
-  const [versions, setVersions] = useState<QuizVersion[]>(initialQuizVersions);
-  const [currentVersionId, setCurrentVersionId] = useState(initialQuizVersions[0].id);
+  const [versions, setVersions] = useState<QuizVersion[]>([]);
+  const [currentVersionId, setCurrentVersionId] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
