@@ -13,21 +13,26 @@ export async function ensureQuestionBankAdmin(password?: string) {
   
   if (user?.email === ADMIN_EMAIL) return true;
 
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
-    options: { queryParams: { prompt: 'select_account' } }
+  // 尝试邮箱登录
+  const email = prompt('请输入管理员邮箱登录：');
+  if (!email) return false;
+  
+  const pwd = prompt('请输入密码：');
+  if (!pwd) return false;
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password: pwd
   });
 
   if (error) {
-    console.error(error);
-    alert('写入数据库前需要登录管理员 Google 账号。');
+    alert('登录失败: ' + error.message);
     return false;
   }
 
-  const { data: { user: newUser } } = await supabase.auth.getUser();
-  
-  if (newUser?.email !== ADMIN_EMAIL) {
+  if (data.user?.email !== ADMIN_EMAIL) {
     alert(`请使用管理员账号 ${ADMIN_EMAIL} 登录。`);
+    await supabase.auth.signOut();
     return false;
   }
 

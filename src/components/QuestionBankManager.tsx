@@ -42,12 +42,20 @@ export function QuestionBankManager({ password, initialVersions, onClose }: { pa
   }, []);
 
   const handleCloudLogin = async () => {
+    const email = prompt('请输入管理员邮箱：');
+    if (!email) return;
+    const pwd = prompt('请输入密码：');
+    if (!pwd) return;
     try {
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { queryParams: { prompt: 'select_account' } }
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password: pwd
       });
       if (error) throw error;
+      if (data.user?.email !== 'candiescot@gmail.com') {
+        alert('你不是管理员');
+        await supabase.auth.signOut();
+      }
     } catch (err) {
       console.error(err);
       alert('登录失败');
